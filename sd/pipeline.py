@@ -2,6 +2,11 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from ddpm import DDPMSampler
+from LRHR_dataset import LRHRDataset
+from Scheduler import GradualWarmupScheduler
+import torch.nn as nn
+import os
+import logging
 
 WIDTH = 512
 HEIGHT = 512
@@ -150,6 +155,111 @@ def generate(
         images = images.permute(0, 2, 3, 1)
         images = images.to("cpu", torch.uint8).numpy()
         return images[0]
+
+def train(sampler_name="ddpm",
+    uncond_prompt='',
+    n_timestamp=1000,
+    models={},
+    seed=None,
+    device=None,
+    tokenizer=None,
+    batch_size=10,
+    epochs=100,
+    lr=0.0001,
+    batch_print_interval=100,
+    checkpoint_save_interval=1,
+    save_path='',):
+
+    generator = torch.Generator(device=device)
+    if seed is None:
+        generator.seed()
+    else:
+        generator.manual_seed(seed)
+
+    dataset = LRHRDataset(dataroot='', datatype='img', split='train', data_len=-1)
+    data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    if sampler_name == "ddpm":
+        sampler = DDPMSampler(generator, num_training_steps=n_timestamp)
+        # sampler.set_inference_timesteps(n_timestamp)
+    else:
+        raise ValueError("Unknown sampler value %s. ")
+
+    diffusion = models["diffusion"]
+    diffusion.to(device)
+
+    encoder = models["encoder"]
+    encoder.to(device)
+    decoder = models["decoder"]
+    decoder.to(device)
+    clip = models["clip"]
+    clip.to(device)
+
+    loss_func = nn.MSELoss(reduction='sum').to(device)
+
+    logger = logging.getLogger('base')
+
+    optimizer = torch.optim.AdamW(
+        diffusion.parameters(), lr=lr, weight_decay=1e-4)
+    cosineScheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer=optimizer, T_max=1000, eta_min=0, last_epoch=-1)
+    warmUpScheduler = GradualWarmupScheduler(
+        optimizer=optimizer, multiplier=2., warm_epoch=epochs // 10,
+        after_scheduler=cosineScheduler)
+
+    latents_shape = (1, 4, LATENTS_HEIGHT, LATENTS_WIDTH)
+    os.makedirs(save_path, exist_ok=True)
+    loss_list = []
+    num = 0
+    for e in range(epochs):
+
+        with tqdm(data_loader, dynamic_ncols=True) as tqdmDataLoader:
+            for data_low, data_high, index in tqdmDataLoader:
+                data_high = data_high.to(device)
+                data_low = data_low.to(device)
+
+                # data_concate = torch.cat([data_color, snr_map], dim=1)
+                optimizer.zero_grad()
+                sampler.add_noise()
+                [b, c, h, w] = data_high.shape
+                t = torch.randint(0, n_timestamp, (b,)).long()
+                noisy_image, noise = sampler.add_noise(data_high, t)
+                # encoder -> 3, 512, 512 to 4, 512//8, 512//8
+                encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
+                # (Batch_Size, 4, Latents_Height, Latents_Width)
+                noisy_image_en = encoder(noisy_image, encoder_noise)
+
+                timestamps = get_time_embedding(t)
+
+                uncond_tokens = tokenizer.batch_encode_plus(
+                    [uncond_prompt], padding="max_length", max_length=77
+                ).input_ids
+                # (Batch_Size, Seq_Len)
+                uncond_tokens = torch.tensor(uncond_tokens, dtype=torch.long, device=device)
+                # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
+                uncond_context = clip(uncond_tokens)
+                uncond_context = uncond_context.repeat(b, 1, 1)
+                noise_pred = diffusion(noisy_image_en, uncond_context, timestamps)
+                loss = loss_func(noise_pred, noise)
+                loss = loss.mean()
+                loss.backward()
+                optimizer.step()
+                loss_list.append(loss.item())
+                if num % batch_print_interval == 0:
+                    print(f'[Epoch {e}] [batch {num}] loss: {loss.item()}')
+                    logger.info('[Epoch {}] [batch {}] loss: {}'.format(e, num, loss.item()))
+                num =+1
+        warmUpScheduler.step()
+
+        if e % checkpoint_save_interval == 0 or e == e - 1:
+            print(f'Saving model {e} to {save_path}...')
+            logger.info('Saving model {} to {}...'.format(e, save_path))
+            save_dict = dict(model=diffusion.state_dict(),
+                             optimizer=optimizer.state_dict(),
+                             epoch=e,
+                             loss_list=loss_list)
+            torch.save(save_dict,
+                       os.path.join(save_path, f'sd_diffusion_{e}.pth'))
+
     
 def rescale(x, old_range, new_range, clamp=False):
     old_min, old_max = old_range
