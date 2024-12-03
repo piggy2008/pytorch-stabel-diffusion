@@ -26,3 +26,6 @@ def preload_models_from_standard_weights(ckpt_path, device):
         'decoder': decoder,
         'diffusion': diffusion,
     }
+
+if __name__ == '__main__':
+    preload_models_from_standard_weights('../data/v1-5-pruned-emaonly.ckpt', 'cpu')
