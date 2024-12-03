@@ -168,6 +168,8 @@ def train(sampler_name="ddpm",
     lr=0.0001,
     batch_print_interval=100,
     checkpoint_save_interval=1,
+    dataroot='',
+    image_size=512,
     save_path='',):
 
     generator = torch.Generator(device=device)
@@ -176,7 +178,7 @@ def train(sampler_name="ddpm",
     else:
         generator.manual_seed(seed)
 
-    dataset = LRHRDataset(dataroot='', datatype='img', split='train', data_len=-1)
+    dataset = LRHRDataset(dataroot=dataroot, datatype='img', split='train', data_len=-1, image_size=image_size)
     data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     if sampler_name == "ddpm":
         sampler = DDPMSampler(generator, num_training_steps=n_timestamp)
@@ -194,7 +196,7 @@ def train(sampler_name="ddpm",
     clip = models["clip"]
     clip.to(device)
 
-    loss_func = nn.MSELoss(reduction='sum').to(device)
+    loss_func = nn.MSELoss(reduction='mean').to(device)
 
     logger = logging.getLogger('base')
 
@@ -209,26 +211,26 @@ def train(sampler_name="ddpm",
     latents_shape = (1, 4, LATENTS_HEIGHT, LATENTS_WIDTH)
     os.makedirs(save_path, exist_ok=True)
     loss_list = []
-    num = 0
+    # num = 0
     for e in range(epochs):
 
         with tqdm(data_loader, dynamic_ncols=True) as tqdmDataLoader:
-            for data_low, data_high, index in tqdmDataLoader:
-                data_high = data_high.to(device)
-                data_low = data_low.to(device)
+            for batch, data in enumerate(tqdmDataLoader):
+                data_high = data['high'].to(device)
+                data_low = data['low'].to(device)
 
                 # data_concate = torch.cat([data_color, snr_map], dim=1)
                 optimizer.zero_grad()
-                sampler.add_noise()
+                # sampler.add_noise()
                 [b, c, h, w] = data_high.shape
                 t = torch.randint(0, n_timestamp, (b,)).long()
-                noisy_image, noise = sampler.add_noise(data_high, t)
+
                 # encoder -> 3, 512, 512 to 4, 512//8, 512//8
                 encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
-                noisy_image_en = encoder(noisy_image, encoder_noise)
-
-                timestamps = get_time_embedding(t)
+                image_en = encoder(data_high, encoder_noise)
+                noisy_image, noise = sampler.add_noise(image_en, t)
+                timestamps = get_time_embedding(t).to(device)
 
                 uncond_tokens = tokenizer.batch_encode_plus(
                     [uncond_prompt], padding="max_length", max_length=77
@@ -238,16 +240,16 @@ def train(sampler_name="ddpm",
                 # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
                 uncond_context = clip(uncond_tokens)
                 uncond_context = uncond_context.repeat(b, 1, 1)
-                noise_pred = diffusion(noisy_image_en, uncond_context, timestamps)
+                noise_pred = diffusion(noisy_image, uncond_context, timestamps)
                 loss = loss_func(noise_pred, noise)
                 loss = loss.mean()
                 loss.backward()
                 optimizer.step()
                 loss_list.append(loss.item())
-                if num % batch_print_interval == 0:
-                    print(f'[Epoch {e}] [batch {num}] loss: {loss.item()}')
-                    logger.info('[Epoch {}] [batch {}] loss: {}'.format(e, num, loss.item()))
-                num =+1
+                if batch % batch_print_interval == 0:
+                    print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
+                    logger.info('[Epoch {}] [batch {}] loss: {}'.format(e, batch, loss.item()))
+
         warmUpScheduler.step()
 
         if e % checkpoint_save_interval == 0 or e == e - 1:
@@ -273,8 +275,11 @@ def rescale(x, old_range, new_range, clamp=False):
 
 def get_time_embedding(timestep):
     # Shape: (160,)
-    freqs = torch.pow(10000, -torch.arange(start=0, end=160, dtype=torch.float32) / 160) 
-    # Shape: (1, 160)
-    x = torch.tensor([timestep], dtype=torch.float32)[:, None] * freqs[None]
+    freqs = torch.pow(10000, -torch.arange(start=0, end=160, dtype=torch.float32) / 160)
+    if torch.is_tensor(timestep):
+        x = timestep[:, None] * freqs[None]
+    else:
+        # Shape: (1, 160)
+        x = torch.tensor([timestep], dtype=torch.float32)[:, None] * freqs[None]
     # Shape: (1, 160 * 2)
     return torch.cat([torch.cos(x), torch.sin(x)], dim=-1)

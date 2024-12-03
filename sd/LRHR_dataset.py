@@ -36,17 +36,18 @@ def color_filter(image):
     return result_neg + result[:, :, ::-1]
 
 class LRHRDataset(Dataset):
-    def __init__(self, dataroot, datatype, split='train', data_len=-1):
+    def __init__(self, dataroot, datatype, split='train', data_len=-1, image_size=512):
         self.datatype = datatype
         self.data_len = data_len
         self.split = split
+        self.image_size = image_size
 
 
         if datatype == 'img':
             self.sr_path = Util.get_paths_from_images(
                 '{}/{}'.format(dataroot, 'image'))
             self.hr_path = Util.get_paths_from_images(
-                '{}/{}'.format(dataroot, 'gt'))
+                '{}/{}'.format(dataroot, 'label'))
             # self.style_path = Util.get_paths_from_images(
             #     '{}/hr_{}_style'.format(dataroot, r_resolution))
             # if self.need_LR:
@@ -71,8 +72,8 @@ class LRHRDataset(Dataset):
         # img_SR = Image.open(self.sr_path[index]).convert("RGB").resize((128, 128))
         # img_style = Image.open(self.style_path[index]).convert("RGB").resize((64, 64))
 
-        img_HR = Image.open(self.hr_path[index]).convert("RGB")
-        img_SR = Image.open(self.sr_path[index]).convert("RGB")
+        img_HR = Image.open(self.hr_path[index]).convert("RGB").resize((self.image_size, self.image_size))
+        img_SR = Image.open(self.sr_path[index]).convert("RGB").resize((self.image_size, self.image_size))
         # img_style = Image.open(self.style_path[index]).convert("RGB")
         # img_style = Image.open(self.style_path[index_style]).convert("RGB")
 
@@ -88,4 +89,4 @@ class LRHRDataset(Dataset):
         # img_style = Image.open(self.sr_path[index]).convert("RGB")
         [img_SR, img_HR] = Util.transform_augment(
             [img_SR, img_HR], split=self.split, min_max=(-1, 1))
-        return img_HR, img_SR, index
+        return {'high': img_HR, 'low': img_SR}

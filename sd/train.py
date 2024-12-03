@@ -39,6 +39,8 @@ setup_logger(None, experiments_root,
 logger = logging.getLogger('base')
 tokenizer = CLIPTokenizer(config.get('vocab_file'), merges_file=config.get('merge_file'))
 model_file = config.get('pre_trained_param')
+image_root = config.get('img_root_path')
+image_size = config.get('image_size')
 models = model_loader.preload_models_from_standard_weights(model_file, DEVICE)
 epochs = config.get('epochs')
 batch_size = config.get('batch_size')
@@ -47,10 +49,13 @@ lr = config.get('lr')
 batch_print_interval = config.get('batch_print_interval')
 checkpoint_save_interval = config.get('checkpoint_save_interval', 1)
 
+logger.info('training set root:' + image_root)
 logger.info('pretrained file:' + model_file)
 logger.info('training total epoch:' + str(epochs))
 logger.info('batch size:' + str(batch_size))
+logger.info('input image size:' + str(image_size))
 logger.info('start learning rate:' + str(lr))
+
 ## TEXT TO IMAGE
 
 # prompt = "A dog with sunglasses, wearing comfy hat, looking at camera, highly detailed, ultra sharp, cinematic, 100mm lens, 8k resolution."
@@ -88,6 +93,7 @@ output_image = pipeline.train(
     lr=lr,
     batch_print_interval=batch_print_interval,
     checkpoint_save_interval=checkpoint_save_interval,
+    dataroot=image_root,
     save_path=experiments_root
 )
 

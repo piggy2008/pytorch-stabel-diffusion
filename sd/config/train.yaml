@@ -1,12 +1,12 @@
 epochs: 20 # 训练多少个epoch
-batch_size: 16  # batch_size小一些
+batch_size: 3  # batch_size小一些
 lr: 0.00001  # 学习率
 lr_adjust_epoch: 10 # 学习率调整的epoch，降为原有的10%
 batch_print_interval: 100 # 打印间隔，以batch为单位
 checkpoint_save_interval: 10 # 模型保存间隔，以epoch为单位
 save_path: './experiments'  # 模型保存路径
 use_cfg: True  # 是否使用classifier-free guidance，开启就可以训练条件生成模型了
-device: 'cpu' # cuda、cpu、mps(only macbook)
+device: 'cuda' # cuda、cpu、mps(only macbook)
 
 # clip param
 vocab_file: '../data/vocab.json'
@@ -15,9 +15,10 @@ prompt: 'normal images enhanced from underwater scenes'
 uncond_prompt: ''
 
 # pretrained param
-pre_trained_param: '../data/v1-5-pruned-emaonly.ckpt"'
+pre_trained_param: '../data/v1-5-pruned-emaonly.ckpt'
 
 # reflow新增参数
-img_root_path: './data/reflow_img'  # 图像的地址
+img_root_path: '../../../data/UIE-dataset/UIEBD/train'  # 图像的地址
 noise_root_path: './data/reflow_noise'  # 噪声的地址
 checkpoint_path: './checkpoints/v1.1-cfg/miniunet_49.pth'  # 模型的地址 finetune
+image_size: 512
