@@ -118,14 +118,14 @@ def generate(
 
         diffusion = models["diffusion"]
         diffusion.to(device)
-
+        x_t = torch.randn(latents_shape, generator=generator, device=device)
         timesteps = tqdm(sampler.timesteps)
         for i, timestep in enumerate(timesteps):
             # (1, 320)
             time_embedding = get_time_embedding(timestep).to(device)
 
             # (Batch_Size, 4, Latents_Height, Latents_Width)
-            model_input = latents
+            model_input = torch.cat([latents, x_t], dim=1)
 
             if do_cfg:
                 # (Batch_Size, 4, Latents_Height, Latents_Width) -> (2 * Batch_Size, 4, Latents_Height, Latents_Width)
