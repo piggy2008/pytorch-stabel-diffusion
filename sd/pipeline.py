@@ -8,6 +8,9 @@ import torch.nn as nn
 import os
 import logging
 
+from accelerate import Accelerator
+from accelerate.utils import set_seed
+
 WIDTH = 512
 HEIGHT = 512
 LATENTS_WIDTH = WIDTH // 8
@@ -191,10 +194,13 @@ def train(sampler_name="ddpm",
 
     encoder = models["encoder"]
     encoder.to(device)
+    encoder.eval()
     decoder = models["decoder"]
     decoder.to(device)
+    decoder.eval()
     clip = models["clip"]
     clip.to(device)
+    clip.eval()
 
     loss_func = nn.MSELoss(reduction='mean').to(device)
 
@@ -208,6 +214,10 @@ def train(sampler_name="ddpm",
         optimizer=optimizer, multiplier=2., warm_epoch=epochs // 10,
         after_scheduler=cosineScheduler)
 
+    # set_seed(44)
+    # accelerator = Accelerator(mixed_precision='no')
+    # accelerator.print(f'device {str(accelerator.device)} is used.')
+    # diffusion, optimizer, warmUpScheduler, data_loader = accelerator.prepare(diffusion, optimizer, warmUpScheduler, data_loader)
     latents_shape = (1, 4, LATENTS_HEIGHT, LATENTS_WIDTH)
     os.makedirs(save_path, exist_ok=True)
     loss_list = []
@@ -228,7 +238,8 @@ def train(sampler_name="ddpm",
                 # encoder -> 3, 512, 512 to 4, 512//8, 512//8
                 encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
-                image_en = encoder(data_high, encoder_noise)
+                image_en = encoder(torch.cat([data_high, data_low], dim=0), encoder_noise)
+                image_en, condition = image_en.chunk(2, dim=0)
                 noisy_image, noise = sampler.add_noise(image_en, t)
                 timestamps = get_time_embedding(t).to(device)
 
@@ -240,14 +251,16 @@ def train(sampler_name="ddpm",
                 # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
                 uncond_context = clip(uncond_tokens)
                 uncond_context = uncond_context.repeat(b, 1, 1)
-                noise_pred = diffusion(noisy_image, uncond_context, timestamps)
+                input_image = torch.cat([noisy_image, condition], dim=1)
+                noise_pred = diffusion(input_image, uncond_context, timestamps)
                 loss = loss_func(noise_pred, noise)
                 loss = loss.mean()
                 loss.backward()
+                # accelerator.backward(loss)
                 optimizer.step()
                 loss_list.append(loss.item())
                 if batch % batch_print_interval == 0:
-                    print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
+                    # print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
                     logger.info('[Epoch {}] [batch {}] loss: {}'.format(e, batch, loss.item()))
 
         warmUpScheduler.step()
