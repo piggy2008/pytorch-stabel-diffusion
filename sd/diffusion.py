@@ -28,11 +28,11 @@ class TimeEmbedding(nn.Module):
 class UNET_ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, n_time=1280):
         super().__init__()
-        self.groupnorm_feature = nn.GroupNorm(32, in_channels)
+        self.groupnorm_feature = nn.GroupNorm(20, in_channels)
         self.conv_feature = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
         self.linear_time = nn.Linear(n_time, out_channels)
 
-        self.groupnorm_merged = nn.GroupNorm(32, out_channels)
+        self.groupnorm_merged = nn.GroupNorm(20, out_channels)
         self.conv_merged = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
 
         if in_channels == out_channels:
@@ -83,7 +83,7 @@ class UNET_AttentionBlock(nn.Module):
         super().__init__()
         channels = n_head * n_embd
 
-        self.groupnorm = nn.GroupNorm(32, channels, eps=1e-6)
+        self.groupnorm = nn.GroupNorm(20, channels, eps=1e-6)
         self.conv_input = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
 
         self.layernorm_1 = nn.LayerNorm(channels)
@@ -204,89 +204,89 @@ class UNET(nn.Module):
         super().__init__()
         self.encoders = nn.ModuleList([
             # (Batch_Size, 4, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8)
-            SwitchSequential(nn.Conv2d(8, 320, kernel_size=3, padding=1)),
+            SwitchSequential(nn.Conv2d(8, 80, kernel_size=3, padding=1)),
 
             # (Batch_Size, 320, Height / 8, Width / 8) -> # (Batch_Size, 320, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8)
-            SwitchSequential(UNET_ResidualBlock(320, 320), UNET_AttentionBlock(8, 40)),
+            SwitchSequential(UNET_ResidualBlock(80, 80), UNET_AttentionBlock(2, 40)),
 
             # (Batch_Size, 320, Height / 8, Width / 8) -> # (Batch_Size, 320, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8)
-            SwitchSequential(UNET_ResidualBlock(320, 320), UNET_AttentionBlock(8, 40)),
+            SwitchSequential(UNET_ResidualBlock(80, 80), UNET_AttentionBlock(2, 40)),
 
             # (Batch_Size, 320, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 16, Width / 16)
-            SwitchSequential(nn.Conv2d(320, 320, kernel_size=3, stride=2, padding=1)),
+            SwitchSequential(nn.Conv2d(80, 80, kernel_size=3, stride=2, padding=1)),
 
             # (Batch_Size, 320, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16)
-            SwitchSequential(UNET_ResidualBlock(320, 640), UNET_AttentionBlock(8, 80)),
+            SwitchSequential(UNET_ResidualBlock(80, 160), UNET_AttentionBlock(2, 80)),
 
             # (Batch_Size, 640, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16)
-            SwitchSequential(UNET_ResidualBlock(640, 640), UNET_AttentionBlock(8, 80)),
+            SwitchSequential(UNET_ResidualBlock(160, 160), UNET_AttentionBlock(2, 80)),
 
             # (Batch_Size, 640, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 32, Width / 32)
-            SwitchSequential(nn.Conv2d(640, 640, kernel_size=3, stride=2, padding=1)),
+            SwitchSequential(nn.Conv2d(160, 160, kernel_size=3, stride=2, padding=1)),
 
             # (Batch_Size, 640, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32)
-            SwitchSequential(UNET_ResidualBlock(640, 1280), UNET_AttentionBlock(8, 160)),
+            SwitchSequential(UNET_ResidualBlock(160, 320), UNET_AttentionBlock(2, 160)),
 
             # (Batch_Size, 1280, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32)
-            SwitchSequential(UNET_ResidualBlock(1280, 1280), UNET_AttentionBlock(8, 160)),
+            SwitchSequential(UNET_ResidualBlock(320, 320), UNET_AttentionBlock(2, 160)),
 
             # (Batch_Size, 1280, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 64, Width / 64)
-            SwitchSequential(nn.Conv2d(1280, 1280, kernel_size=3, stride=2, padding=1)),
+            SwitchSequential(nn.Conv2d(320, 320, kernel_size=3, stride=2, padding=1)),
 
             # (Batch_Size, 1280, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 64, Width / 64)
-            SwitchSequential(UNET_ResidualBlock(1280, 1280)),
+            SwitchSequential(UNET_ResidualBlock(320, 320)),
 
             # (Batch_Size, 1280, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 64, Width / 64)
-            SwitchSequential(UNET_ResidualBlock(1280, 1280)),
+            SwitchSequential(UNET_ResidualBlock(320, 320)),
         ])
 
         self.bottleneck = SwitchSequential(
             # (Batch_Size, 1280, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 64, Width / 64)
-            UNET_ResidualBlock(1280, 1280),
+            UNET_ResidualBlock(320, 320),
 
             # (Batch_Size, 1280, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 64, Width / 64)
-            UNET_AttentionBlock(8, 160),
+            UNET_AttentionBlock(2, 160),
 
             # (Batch_Size, 1280, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 64, Width / 64)
-            UNET_ResidualBlock(1280, 1280),
+            UNET_ResidualBlock(320, 320),
         )
 
         self.decoders = nn.ModuleList([
             # (Batch_Size, 2560, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 64, Width / 64)
-            SwitchSequential(UNET_ResidualBlock(2560, 1280)),
+            SwitchSequential(UNET_ResidualBlock(640, 320)),
 
             # (Batch_Size, 2560, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 64, Width / 64)
-            SwitchSequential(UNET_ResidualBlock(2560, 1280)),
+            SwitchSequential(UNET_ResidualBlock(640, 320)),
 
             # (Batch_Size, 2560, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 64, Width / 64) -> (Batch_Size, 1280, Height / 32, Width / 32)
-            SwitchSequential(UNET_ResidualBlock(2560, 1280), Upsample(1280)),
+            SwitchSequential(UNET_ResidualBlock(640, 320), Upsample(320)),
 
             # (Batch_Size, 2560, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32)
-            SwitchSequential(UNET_ResidualBlock(2560, 1280), UNET_AttentionBlock(8, 160)),
+            SwitchSequential(UNET_ResidualBlock(640, 320), UNET_AttentionBlock(2, 160)),
 
             # (Batch_Size, 2560, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32)
-            SwitchSequential(UNET_ResidualBlock(2560, 1280), UNET_AttentionBlock(8, 160)),
+            SwitchSequential(UNET_ResidualBlock(640, 320), UNET_AttentionBlock(2, 160)),
 
             # (Batch_Size, 1920, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 32, Width / 32) -> (Batch_Size, 1280, Height / 16, Width / 16)
-            SwitchSequential(UNET_ResidualBlock(1920, 1280), UNET_AttentionBlock(8, 160), Upsample(1280)),
+            SwitchSequential(UNET_ResidualBlock(480, 320), UNET_AttentionBlock(2, 160), Upsample(320)),
 
             # (Batch_Size, 1920, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16)
-            SwitchSequential(UNET_ResidualBlock(1920, 640), UNET_AttentionBlock(8, 80)),
+            SwitchSequential(UNET_ResidualBlock(480, 160), UNET_AttentionBlock(2, 80)),
 
             # (Batch_Size, 1280, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16)
-            SwitchSequential(UNET_ResidualBlock(1280, 640), UNET_AttentionBlock(8, 80)),
+            SwitchSequential(UNET_ResidualBlock(320, 160), UNET_AttentionBlock(2, 80)),
 
             # (Batch_Size, 960, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 16, Width / 16) -> (Batch_Size, 640, Height / 8, Width / 8)
-            SwitchSequential(UNET_ResidualBlock(960, 640), UNET_AttentionBlock(8, 80), Upsample(640)),
+            SwitchSequential(UNET_ResidualBlock(240, 160), UNET_AttentionBlock(2, 80), Upsample(160)),
 
             # (Batch_Size, 960, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8)
-            SwitchSequential(UNET_ResidualBlock(960, 320), UNET_AttentionBlock(8, 40)),
+            SwitchSequential(UNET_ResidualBlock(240, 80), UNET_AttentionBlock(2, 40)),
 
             # (Batch_Size, 640, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8)
-            SwitchSequential(UNET_ResidualBlock(640, 320), UNET_AttentionBlock(8, 40)),
+            SwitchSequential(UNET_ResidualBlock(160, 80), UNET_AttentionBlock(2, 40)),
 
             # (Batch_Size, 640, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8)
-            SwitchSequential(UNET_ResidualBlock(640, 320), UNET_AttentionBlock(8, 40)),
+            SwitchSequential(UNET_ResidualBlock(160, 80), UNET_AttentionBlock(2, 40)),
         ])
 
     def forward(self, x, context, time):
@@ -300,19 +300,19 @@ class UNET(nn.Module):
             skip_connections.append(x)
 
         x = self.bottleneck(x, context, time)
-
-        for layers in self.decoders:
+        for num, layers in enumerate(self.decoders):
             # Since we always concat with the skip connection of the encoder, the number of features increases before being sent to the decoder's layer
-            x = torch.cat((x, skip_connections.pop()), dim=1)
+            tmp = skip_connections.pop()
+            print('num: {}, x={}, skip={}'.format(num, x.shape, tmp.shape))
+            x = torch.cat((x, tmp), dim=1)
             x = layers(x, context, time)
-
         return x
 
 
 class UNET_OutputLayer(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.groupnorm = nn.GroupNorm(32, in_channels)
+        self.groupnorm = nn.GroupNorm(20, in_channels)
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
 
     def forward(self, x):
@@ -336,7 +336,7 @@ class Diffusion(nn.Module):
         super().__init__()
         self.time_embedding = TimeEmbedding(320)
         self.unet = UNET()
-        self.final = UNET_OutputLayer(320, 4)
+        self.final = UNET_OutputLayer(80, 4)
 
     def forward(self, latent, context, time):
         # latent: (Batch_Size, 4, Height / 8, Width / 8)
@@ -354,3 +354,12 @@ class Diffusion(nn.Module):
 
         # (Batch, 4, Height / 8, Width / 8)
         return output
+
+
+if __name__ == '__main__':
+    model = Diffusion()
+    latent = torch.zeros([1, 8, 64, 64])
+    context = torch.zeros([1, 77, 768])
+    t = torch.zeros(1, 320)
+    output = model(latent, context, t)
+    print(output.shape)
