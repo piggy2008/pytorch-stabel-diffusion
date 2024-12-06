@@ -9,6 +9,9 @@ import torch.nn as nn
 import os
 import logging
 
+# from accelerate import Accelerator
+# from accelerate.utils import set_seed
+
 WIDTH = 512
 HEIGHT = 512
 LATENTS_WIDTH = WIDTH // 8
@@ -29,7 +32,7 @@ def generate(
     idle_device=None,
     tokenizer=None,
 ):
-    with torch.no_grad():
+    with (torch.no_grad()):
         if not 0 < strength <= 1:
             raise ValueError("strength must be between 0 and 1")
 
@@ -70,7 +73,7 @@ def generate(
         else:
             # Convert into a list of length Seq_Len=77
             tokens = tokenizer.batch_encode_plus(
-                [prompt], padding="max_length", max_length=77
+                [uncond_prompt], padding="max_length", max_length=77
             ).input_ids
             # (Batch_Size, Seq_Len)
             tokens = torch.tensor(tokens, dtype=torch.long, device=device)
@@ -78,9 +81,11 @@ def generate(
             context = clip(tokens)
         to_idle(clip)
 
-        if sampler_name == "ddpm":
+        if sampler_name == 'ddpm':
             sampler = DDPMSampler(generator)
             sampler.set_inference_timesteps(n_inference_steps)
+        elif sampler_name == 'rf':
+            sampler = RectifiedFlow()
         else:
             raise ValueError("Unknown sampler value %s. ")
 
@@ -105,12 +110,12 @@ def generate(
             # (Batch_Size, 4, Latents_Height, Latents_Width)
             encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
             # (Batch_Size, 4, Latents_Height, Latents_Width)
-            latents = encoder(input_image_tensor, encoder_noise)
+            condition = encoder(input_image_tensor, encoder_noise)
 
             # Add noise to the latents (the encoded input image)
             # (Batch_Size, 4, Latents_Height, Latents_Width)
-            sampler.set_strength(strength=strength)
-            latents = sampler.add_noise(latents, sampler.timesteps[0])
+            # sampler.set_strength(strength=strength)
+            # latents = sampler.add_noise(latents, sampler.timesteps[0])
 
             to_idle(encoder)
         else:
@@ -119,14 +124,21 @@ def generate(
 
         diffusion = models["diffusion"]
         diffusion.to(device)
-        x_t = torch.randn(latents_shape, generator=generator, device=device)
-        timesteps = tqdm(sampler.timesteps)
+        latents = torch.randn(latents_shape, generator=generator, device=device)
+        if sampler_name == 'ddpm':
+            timesteps = tqdm(sampler.timesteps)
+        else:
+            timesteps = torch.from_numpy(np.arange(0, n_inference_steps)[::-1].copy())
+            d_step = 1.0 / n_inference_steps
         for i, timestep in enumerate(timesteps):
             # (1, 320)
-            time_embedding = get_time_embedding(timestep).to(device)
+            if  sampler_name == 'ddpm':
+                time_embedding = get_time_embedding(timestep, 'test').to(device)
+            else:
+                time_embedding = get_time_embedding_rf(torch.tensor([i * d_step])).to(device)
 
             # (Batch_Size, 4, Latents_Height, Latents_Width)
-            model_input = torch.cat([latents, x_t], dim=1)
+            model_input = torch.cat([latents, condition], dim=1)
 
             if do_cfg:
                 # (Batch_Size, 4, Latents_Height, Latents_Width) -> (2 * Batch_Size, 4, Latents_Height, Latents_Width)
@@ -141,7 +153,10 @@ def generate(
                 model_output = cfg_scale * (output_cond - output_uncond) + output_uncond
 
             # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
-            latents = sampler.step(timestep, latents, model_output)
+            if sampler_name == 'ddpm':
+                latents = sampler.step(timestep, latents, model_output)
+            else:
+                latents = sampler.euler(latents, model_output, d_step)
 
         to_idle(diffusion)
 
@@ -194,10 +209,13 @@ def train(sampler_name="ddpm",
 
     encoder = models["encoder"]
     encoder.to(device)
+    encoder.eval()
     decoder = models["decoder"]
     decoder.to(device)
+    decoder.eval()
     clip = models["clip"]
     clip.to(device)
+    clip.eval()
 
     loss_func = nn.MSELoss(reduction='mean').to(device)
 
@@ -211,6 +229,10 @@ def train(sampler_name="ddpm",
         optimizer=optimizer, multiplier=2., warm_epoch=epochs // 10,
         after_scheduler=cosineScheduler)
 
+    # set_seed(44)
+    # accelerator = Accelerator(mixed_precision='no')
+    # accelerator.print(f'device {str(accelerator.device)} is used.')
+    # diffusion, optimizer, warmUpScheduler, data_loader = accelerator.prepare(diffusion, optimizer, warmUpScheduler, data_loader)
     latents_shape = (1, 4, LATENTS_HEIGHT, LATENTS_WIDTH)
     os.makedirs(save_path, exist_ok=True)
     loss_list = []
@@ -221,24 +243,12 @@ def train(sampler_name="ddpm",
             for batch, data in enumerate(tqdmDataLoader):
                 data_high = data['high'].to(device)
                 data_low = data['low'].to(device)
-
-                # data_concate = torch.cat([data_color, snr_map], dim=1)
-                optimizer.zero_grad()
-                # sampler.add_noise()
                 [b, c, h, w] = data_high.shape
-                if sampler_name == "rf":
-                    t = torch.rand(b)
-                    timestamps = get_time_embedding_rf(t).to(device)
-                else:
-                    t = torch.randint(0, n_timestamp, (b,)).long()
-                    timestamps = get_time_embedding(t).to(device)
-
                 # encoder -> 3, 512, 512 to 4, 512//8, 512//8
                 encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
-                image_en = encoder(data_high, encoder_noise)
-                noisy_image, noise = sampler.add_noise(image_en, t)
-
+                image_en = encoder(torch.cat([data_high, data_low], dim=0), encoder_noise)
+                image_en, condition = image_en.chunk(2, dim=0)
 
                 uncond_tokens = tokenizer.batch_encode_plus(
                     [uncond_prompt], padding="max_length", max_length=77
@@ -248,14 +258,31 @@ def train(sampler_name="ddpm",
                 # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
                 uncond_context = clip(uncond_tokens)
                 uncond_context = uncond_context.repeat(b, 1, 1)
-                noise_pred = diffusion(noisy_image, uncond_context, timestamps)
-                loss = loss_func(noise_pred, noise)
+                # data_concate = torch.cat([data_color, snr_map], dim=1)
+                optimizer.zero_grad()
+
+                if sampler_name == 'rf':
+                    t = torch.rand(b)
+                    timestamps = get_time_embedding_rf(t).to(device)
+                    noisy_image, noise = sampler.create_flow(image_en, timestamps)
+                else:
+                    t = torch.randint(0, n_timestamp, (b,)).long()
+                    timestamps = get_time_embedding(t).to(device)
+                    noisy_image, noise = sampler.add_noise(image_en, t)
+
+                input_image = torch.cat([noisy_image, condition], dim=1)
+                noise_pred = diffusion(input_image, uncond_context, timestamps)
+                if sampler_name == 'rf':
+                    loss = loss_func(noise_pred, noisy_image - noise)
+                else:
+                    loss = loss_func(noise_pred, noise)
                 loss = loss.mean()
                 loss.backward()
+                # accelerator.backward(loss)
                 optimizer.step()
                 loss_list.append(loss.item())
                 if batch % batch_print_interval == 0:
-                    print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
+                    # print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
                     logger.info('[Epoch {}] [batch {}] loss: {}'.format(e, batch, loss.item()))
 
         warmUpScheduler.step()
@@ -281,10 +308,10 @@ def rescale(x, old_range, new_range, clamp=False):
         x = x.clamp(new_min, new_max)
     return x
 
-def get_time_embedding(timestep):
+def get_time_embedding(timestep, phase='train'):
     # Shape: (160,)
     freqs = torch.pow(10000, -torch.arange(start=0, end=160, dtype=torch.float32) / 160)
-    if torch.is_tensor(timestep):
+    if phase == 'train':
         x = timestep[:, None] * freqs[None]
     else:
         # Shape: (1, 160)
