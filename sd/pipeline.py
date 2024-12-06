@@ -72,7 +72,7 @@ def generate(
         else:
             # Convert into a list of length Seq_Len=77
             tokens = tokenizer.batch_encode_plus(
-                [prompt], padding="max_length", max_length=77
+                [uncond_prompt], padding="max_length", max_length=77
             ).input_ids
             # (Batch_Size, Seq_Len)
             tokens = torch.tensor(tokens, dtype=torch.long, device=device)
@@ -107,12 +107,12 @@ def generate(
             # (Batch_Size, 4, Latents_Height, Latents_Width)
             encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
             # (Batch_Size, 4, Latents_Height, Latents_Width)
-            latents = encoder(input_image_tensor, encoder_noise)
+            condition = encoder(input_image_tensor, encoder_noise)
 
             # Add noise to the latents (the encoded input image)
             # (Batch_Size, 4, Latents_Height, Latents_Width)
-            sampler.set_strength(strength=strength)
-            latents = sampler.add_noise(latents, sampler.timesteps[0])
+            # sampler.set_strength(strength=strength)
+            # latents = sampler.add_noise(latents, sampler.timesteps[0])
 
             to_idle(encoder)
         else:
@@ -121,14 +121,14 @@ def generate(
 
         diffusion = models["diffusion"]
         diffusion.to(device)
-        x_t = torch.randn(latents_shape, generator=generator, device=device)
+        latents = torch.randn(latents_shape, generator=generator, device=device)
         timesteps = tqdm(sampler.timesteps)
         for i, timestep in enumerate(timesteps):
             # (1, 320)
-            time_embedding = get_time_embedding(timestep).to(device)
+            time_embedding = get_time_embedding(timestep, 'test').to(device)
 
             # (Batch_Size, 4, Latents_Height, Latents_Width)
-            model_input = torch.cat([latents, x_t], dim=1)
+            model_input = torch.cat([latents, condition], dim=1)
 
             if do_cfg:
                 # (Batch_Size, 4, Latents_Height, Latents_Width) -> (2 * Batch_Size, 4, Latents_Height, Latents_Width)
@@ -286,10 +286,10 @@ def rescale(x, old_range, new_range, clamp=False):
         x = x.clamp(new_min, new_max)
     return x
 
-def get_time_embedding(timestep):
+def get_time_embedding(timestep, phase='train'):
     # Shape: (160,)
     freqs = torch.pow(10000, -torch.arange(start=0, end=160, dtype=torch.float32) / 160)
-    if torch.is_tensor(timestep):
+    if phase == 'train':
         x = timestep[:, None] * freqs[None]
     else:
         # Shape: (1, 160)
