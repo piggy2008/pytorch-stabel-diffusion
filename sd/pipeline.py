@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from ddpm import DDPMSampler
+from rf import RectifiedFlow
 from LRHR_dataset import LRHRDataset
 from Scheduler import GradualWarmupScheduler
 import torch.nn as nn
@@ -183,6 +184,8 @@ def train(sampler_name="ddpm",
     if sampler_name == "ddpm":
         sampler = DDPMSampler(generator, num_training_steps=n_timestamp)
         # sampler.set_inference_timesteps(n_timestamp)
+    elif sampler_name == "rf":
+        sampler = RectifiedFlow()
     else:
         raise ValueError("Unknown sampler value %s. ")
 
@@ -223,14 +226,19 @@ def train(sampler_name="ddpm",
                 optimizer.zero_grad()
                 # sampler.add_noise()
                 [b, c, h, w] = data_high.shape
-                t = torch.randint(0, n_timestamp, (b,)).long()
+                if sampler_name == "rf":
+                    t = torch.rand(b)
+                    timestamps = get_time_embedding_rf(t).to(device)
+                else:
+                    t = torch.randint(0, n_timestamp, (b,)).long()
+                    timestamps = get_time_embedding(t).to(device)
 
                 # encoder -> 3, 512, 512 to 4, 512//8, 512//8
                 encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
                 image_en = encoder(data_high, encoder_noise)
                 noisy_image, noise = sampler.add_noise(image_en, t)
-                timestamps = get_time_embedding(t).to(device)
+
 
                 uncond_tokens = tokenizer.batch_encode_plus(
                     [uncond_prompt], padding="max_length", max_length=77
@@ -281,5 +289,13 @@ def get_time_embedding(timestep):
     else:
         # Shape: (1, 160)
         x = torch.tensor([timestep], dtype=torch.float32)[:, None] * freqs[None]
+    # Shape: (1, 160 * 2)
+    return torch.cat([torch.cos(x), torch.sin(x)], dim=-1)
+
+def get_time_embedding_rf(timestep):
+    # Shape: (160,)
+    timestep = timestep * 1000
+    freqs = torch.pow(10000, -torch.arange(start=0, end=160, dtype=torch.float32) / 160)
+    x = timestep[:, None] * freqs[None]
     # Shape: (1, 160 * 2)
     return torch.cat([torch.cos(x), torch.sin(x)], dim=-1)
