@@ -14,12 +14,35 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
+from spatial_attention import BasicTransformerBlock
 
+def calc_mean_std(input, eps=1e-5):
+    batch_size, channels = input.shape[:2]
+
+    reshaped = input.view(batch_size, channels, -1) # Reshape channel wise
+    mean = torch.mean(reshaped, dim = 2).view(batch_size, channels, 1) # Calculat mean and reshape
+    std = torch.sqrt(torch.var(reshaped, dim=2)+eps).view(batch_size, channels, 1) # Calculate variance, add epsilon (avoid 0 division),
+                                                                                # calculate std and reshape
+    return mean, std
+
+def AdaIn(content, style):
+    assert content.shape[:2] == style.shape[:2] # Only first two dim, such that different image sizes is possible
+    batch_size, n_channels = content.shape[:2]
+    mean_content, std_content = calc_mean_std(content)
+    mean_style, std_style = calc_mean_std(style)
+    output = std_style*((content - mean_content) / (std_content)) + mean_style # Normalise, then modify mean and std
+    return output
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
-
+def zero_module(module):
+    """
+    Zero out the parameters of a module and return it.
+    """
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
 #################################################################################
 #               Embedding Layers for Timesteps and Class Labels                 #
 #################################################################################
@@ -28,7 +51,6 @@ class TimestepEmbedder(nn.Module):
     """
     Embeds scalar timesteps into vector representations.
     """
-
     def __init__(self, hidden_size, frequency_embedding_size=256):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -69,7 +91,6 @@ class LabelEmbedder(nn.Module):
     """
     Embeds class labels into vector representations. Also handles label dropout for classifier-free guidance.
     """
-
     def __init__(self, num_classes, hidden_size, dropout_prob):
         super().__init__()
         use_cfg_embedding = dropout_prob > 0
@@ -104,7 +125,6 @@ class DiTBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
     """
-
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -129,7 +149,6 @@ class FinalLayer(nn.Module):
     """
     The final layer of DiT.
     """
-
     def __init__(self, hidden_size, patch_size, out_channels):
         super().__init__()
         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -150,30 +169,32 @@ class DiT(nn.Module):
     """
     Diffusion model with a Transformer backbone.
     """
-
     def __init__(
-            self,
-            input_size=32,
-            patch_size=2,
-            in_channels=4,
-            hidden_size=1152,
-            depth=28,
-            num_heads=16,
-            mlp_ratio=4.0,
-            class_dropout_prob=0.1,
-            num_classes=1000,
-            learn_sigma=True,
+        self,
+        input_size=128,
+        patch_size=2,
+        in_channels=4,
+        out_channels=3,
+        hidden_size=384,
+        depth=12,
+        num_heads=6,
+        mlp_ratio=4.0,
+        class_dropout_prob=0.1,
+        num_classes=1000,
+        learn_sigma=False,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
         self.in_channels = in_channels
-        self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.out_channels = out_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
+        self.depth = depth
 
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
+        # self.x_embedder_style = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
-        self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
+        # self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
@@ -181,6 +202,12 @@ class DiT(nn.Module):
         self.blocks = nn.ModuleList([
             DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
+
+        self.transformer_blocks = nn.ModuleList(
+            [BasicTransformerBlock(hidden_size, 1, hidden_size, context_dim=768)
+             for d in range(depth)]
+        )
+
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
 
@@ -191,7 +218,6 @@ class DiT(nn.Module):
                 torch.nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
-
         self.apply(_basic_init)
 
         # Initialize (and freeze) pos_embed by sin-cos embedding:
@@ -204,7 +230,7 @@ class DiT(nn.Module):
         nn.init.constant_(self.x_embedder.proj.bias, 0)
 
         # Initialize label embedding table:
-        nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
+        # nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
@@ -236,28 +262,43 @@ class DiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
-    def ckpt_wrapper(self, module):
-        def ckpt_forward(*inputs):
-            outputs = module(*inputs)
-            return outputs
-
-        return ckpt_forward
-
-    def forward(self, x, t, y):
+    def forward(self, x, t, context):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
         """
+        # a = self.x_embedder(x)
+        # print(x.shape)
+        # print(self.pos_embed.shape)
         x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
-        t = self.t_embedder(t)  # (N, D)
-        y = self.y_embedder(y, self.training)  # (N, D)
-        c = t + y  # (N, D)
-        for block in self.blocks:
-            x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(block), x, c)  # (N, T, D)
-        x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
-        x = self.unpatchify(x)  # (N, out_channels, H, W)
+        # style = self.style_embedder(style) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
+        # style = self.zero_control0(style)
+        t = self.t_embedder(t)                   # (N, D)
+        # y = self.y_embedder(y, self.training)    # (N, D)
+        c = t                                # (N, D)
+        # count = 0
+        control = []
+        for i in range(0, int(self.depth)):
+            # style = self.zero_control[i](self.transformer_blocks2[i](self.blocks2[i](x + style, c), context))
+            # control.append(style)
+            x = self.blocks[i](x, c)  # (N, T, D)
+            print(x.shape)
+            x = self.transformer_blocks[i](x, context)
+        # control.reverse()
+        # for i in range(int(self.depth / 2), int(self.depth)):
+        #     # print('y:', y.shape, '-----', 'control:', b.shape)
+        #     x = self.transformer_blocks[i](x, context)
+
+        # for block, context_blcok in zip(self.blocks, self.transformer_blocks):
+        #     x = block(x, c)                         # (N, T, D)
+        #     # print(x.shape)
+        #     x = context_blcok(x, context)
+        #     # if count < 6:
+        #     #    control.append(self.zero_control[count](x))
+        x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
+        x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x
 
     def forward_with_cfg(self, x, t, y, cfg_scale):
@@ -309,7 +350,7 @@ def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
     emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
     emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
 
-    emb = np.concatenate([emb_h, emb_w], axis=1)  # (H*W, D)
+    emb = np.concatenate([emb_h, emb_w], axis=1) # (H*W, D)
     return emb
 
 
@@ -322,13 +363,13 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     assert embed_dim % 2 == 0
     omega = np.arange(embed_dim // 2, dtype=np.float64)
     omega /= embed_dim / 2.
-    omega = 1. / 10000 ** omega  # (D/2,)
+    omega = 1. / 10000**omega  # (D/2,)
 
     pos = pos.reshape(-1)  # (M,)
     out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
 
-    emb_sin = np.sin(out)  # (M, D/2)
-    emb_cos = np.cos(out)  # (M, D/2)
+    emb_sin = np.sin(out) # (M, D/2)
+    emb_cos = np.cos(out) # (M, D/2)
 
     emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
     return emb
@@ -341,54 +382,56 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 def DiT_XL_2(**kwargs):
     return DiT(depth=28, hidden_size=1152, patch_size=2, num_heads=16, **kwargs)
 
-
 def DiT_XL_4(**kwargs):
     return DiT(depth=28, hidden_size=1152, patch_size=4, num_heads=16, **kwargs)
-
 
 def DiT_XL_8(**kwargs):
     return DiT(depth=28, hidden_size=1152, patch_size=8, num_heads=16, **kwargs)
 
-
 def DiT_L_2(**kwargs):
     return DiT(depth=24, hidden_size=1024, patch_size=2, num_heads=16, **kwargs)
-
 
 def DiT_L_4(**kwargs):
     return DiT(depth=24, hidden_size=1024, patch_size=4, num_heads=16, **kwargs)
 
-
 def DiT_L_8(**kwargs):
     return DiT(depth=24, hidden_size=1024, patch_size=8, num_heads=16, **kwargs)
-
 
 def DiT_B_2(**kwargs):
     return DiT(depth=12, hidden_size=768, patch_size=2, num_heads=12, **kwargs)
 
-
 def DiT_B_4(**kwargs):
     return DiT(depth=12, hidden_size=768, patch_size=4, num_heads=12, **kwargs)
-
 
 def DiT_B_8(**kwargs):
     return DiT(depth=12, hidden_size=768, patch_size=8, num_heads=12, **kwargs)
 
-
 def DiT_S_2(**kwargs):
     return DiT(depth=12, hidden_size=384, patch_size=2, num_heads=6, **kwargs)
 
-
 def DiT_S_4(**kwargs):
     return DiT(depth=12, hidden_size=384, patch_size=4, num_heads=6, **kwargs)
-
 
 def DiT_S_8(**kwargs):
     return DiT(depth=12, hidden_size=384, patch_size=8, num_heads=6, **kwargs)
 
 
 DiT_models = {
-    'DiT-XL/2': DiT_XL_2, 'DiT-XL/4': DiT_XL_4, 'DiT-XL/8': DiT_XL_8,
-    'DiT-L/2': DiT_L_2, 'DiT-L/4': DiT_L_4, 'DiT-L/8': DiT_L_8,
-    'DiT-B/2': DiT_B_2, 'DiT-B/4': DiT_B_4, 'DiT-B/8': DiT_B_8,
-    'DiT-S/2': DiT_S_2, 'DiT-S/4': DiT_S_4, 'DiT-S/8': DiT_S_8,
+    'DiT-XL/2': DiT_XL_2,  'DiT-XL/4': DiT_XL_4,  'DiT-XL/8': DiT_XL_8,
+    'DiT-L/2':  DiT_L_2,   'DiT-L/4':  DiT_L_4,   'DiT-L/8':  DiT_L_8,
+    'DiT-B/2':  DiT_B_2,   'DiT-B/4':  DiT_B_4,   'DiT-B/8':  DiT_B_8,
+    'DiT-S/2':  DiT_S_2,   'DiT-S/4':  DiT_S_4,   'DiT-S/8':  DiT_S_8,
 }
+
+if __name__ == '__main__':
+    img = torch.zeros(2, 4, 128, 128)
+    style_img = torch.zeros(4, 3, 128, 128)
+    time = torch.tensor([1, 2])
+    context = torch.zeros(2, 77, 768)
+    model = DiT(depth=8, in_channels=4, hidden_size=384, patch_size=4, num_heads=6, input_size=128)
+    # model2 = StyleFeatures()
+    output = model(img, time, context)
+    # output = model2(img)
+    print(output.shape)
+    total = sum([param.nelement() for param in model.parameters()])
+    print('parameter: %.2fM' % (total / 1e6))
