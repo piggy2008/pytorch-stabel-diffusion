@@ -10,6 +10,8 @@ device: 'cuda:2' # cuda、cpu、mps(only macbook)
 
 sampler_name: 'rf'
 
+model_name: 'DiT'
+
 # clip param
 vocab_file: '../data/vocab.json'
 merge_file: '../data/merges.txt'
