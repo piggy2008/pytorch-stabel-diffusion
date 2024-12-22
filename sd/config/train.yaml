@@ -8,6 +8,8 @@ save_path: './experiments'  # 模型保存路径
 use_cfg: True  # 是否使用classifier-free guidance，开启就可以训练条件生成模型了
 device: 'cuda' # cuda、cpu、mps(only macbook)
 
+model_name: 'DiT'
+
 # clip param
 vocab_file: '../data/vocab.json'
 merge_file: '../data/merges.txt'
