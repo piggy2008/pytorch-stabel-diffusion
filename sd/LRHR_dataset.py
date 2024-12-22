@@ -45,9 +45,9 @@ class LRHRDataset(Dataset):
 
         if datatype == 'img':
             self.sr_path = Util.get_paths_from_images(
-                '{}/{}'.format(dataroot, 'image'))
+                '{}/{}'.format(dataroot, 'train_input'))
             self.hr_path = Util.get_paths_from_images(
-                '{}/{}'.format(dataroot, 'label'))
+                '{}/{}'.format(dataroot, 'train_gt'))
             # self.style_path = Util.get_paths_from_images(
             #     '{}/hr_{}_style'.format(dataroot, r_resolution))
             # if self.need_LR:

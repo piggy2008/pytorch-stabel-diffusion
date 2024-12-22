@@ -1,5 +1,6 @@
 import model_loader
 import pipeline
+# import pipeline_no_ed
 from PIL import Image
 from pathlib import Path
 from transformers import CLIPTokenizer
@@ -48,7 +49,10 @@ lr_adjust_epoch = config.get('lr_adjust_epoch')
 lr = config.get('lr')
 batch_print_interval = config.get('batch_print_interval')
 checkpoint_save_interval = config.get('checkpoint_save_interval', 1)
+sampler = config.get('sampler_name')
+seed = 42
 
+logger.info('sampling method:' + sampler)
 logger.info('training set root:' + image_root)
 logger.info('pretrained file:' + model_file)
 logger.info('training total epoch:' + str(epochs))
@@ -77,9 +81,7 @@ strength = 0.9
 
 ## SAMPLER
 
-sampler = "ddpm"
-num_inference_steps = 50
-seed = 42
+
 
 output_image = pipeline.train(
     uncond_prompt=uncond_prompt,
@@ -91,6 +93,7 @@ output_image = pipeline.train(
     batch_size=batch_size,
     epochs=epochs,
     lr=lr,
+    image_size=image_size,
     batch_print_interval=batch_print_interval,
     checkpoint_save_interval=checkpoint_save_interval,
     dataroot=image_root,
