@@ -284,7 +284,7 @@ class DiT(nn.Module):
             # style = self.zero_control[i](self.transformer_blocks2[i](self.blocks2[i](x + style, c), context))
             # control.append(style)
             x = self.blocks[i](x, c)  # (N, T, D)
-            print(x.shape)
+            # print(x.shape)
             x = self.transformer_blocks[i](x, context)
         # control.reverse()
         # for i in range(int(self.depth / 2), int(self.depth)):
@@ -431,7 +431,7 @@ if __name__ == '__main__':
     context = torch.zeros(2, 77, 768)
     model = DiT(depth=8, in_channels=4, hidden_size=384, patch_size=4, num_heads=6, input_size=64)
     # model2 = StyleFeatures()
-    output = model(img, t, context)
+    output = model(img, context, t)
     # output = model2(img)
     print(output.shape)
     total = sum([param.nelement() for param in model.parameters()])
