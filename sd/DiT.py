@@ -262,7 +262,7 @@ class DiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
-    def forward(self, x, t, context):
+    def forward(self, x, context, t):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
@@ -424,13 +424,14 @@ DiT_models = {
 }
 
 if __name__ == '__main__':
-    img = torch.zeros(2, 4, 128, 128)
+    img = torch.zeros(2, 4, 64, 64)
     style_img = torch.zeros(4, 3, 128, 128)
     time = torch.tensor([1, 2])
+    t = torch.rand(2) * 1000
     context = torch.zeros(2, 77, 768)
-    model = DiT(depth=8, in_channels=4, hidden_size=384, patch_size=4, num_heads=6, input_size=128)
+    model = DiT(depth=8, in_channels=4, hidden_size=384, patch_size=4, num_heads=6, input_size=64)
     # model2 = StyleFeatures()
-    output = model(img, time, context)
+    output = model(img, t, context)
     # output = model2(img)
     print(output.shape)
     total = sum([param.nelement() for param in model.parameters()])
