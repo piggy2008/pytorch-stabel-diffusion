@@ -16,7 +16,7 @@ def preload_models_from_standard_weights(ckpt_path, device, image_size=512):
     decoder.load_state_dict(state_dict['decoder'], strict=True)
 
     # diffusion = Diffusion().to(device)
-    diffusion = DiT(depth=8, in_channels=8, hidden_size=384, patch_size=4, num_heads=6, input_size=image_size)
+    diffusion = DiT(depth=8, in_channels=8, out_channels=4, hidden_size=384, patch_size=4, num_heads=6, input_size=image_size)
     # diffusion.load_state_dict(state_dict['diffusion'], strict=True)
 
     clip = CLIP().to(device)
