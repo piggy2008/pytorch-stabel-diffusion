@@ -332,6 +332,7 @@ def train(sampler_name="ddpm",
     uncond_prompt='',
     n_timestamp=1000,
     models={},
+    model_name='sd_unet',
     seed=None,
     device=None,
     tokenizer=None,
@@ -421,11 +422,17 @@ def train(sampler_name="ddpm",
                 if sampler_name == 'rf':
                     t = torch.rand(b).to(device)
                     noisy_image, noise = sampler.create_flow(image_en, t)
-                    timestamps = get_time_embedding_rf(t, device)
+                    if model_name == 'DiT':
+                        timestamps = t * n_timestamp
+                    else:
+                        timestamps = get_time_embedding_rf(t, device)
                 else:
                     t = torch.randint(0, n_timestamp, (b,)).long()
-                    timestamps = get_time_embedding(t).to(device)
                     noisy_image, noise = sampler.add_noise(image_en, t)
+                    if model_name == 'DiT':
+                        timestamps = t * n_timestamp
+                    else:
+                        timestamps = get_time_embedding(t).to(device)
 
                 input_image = torch.cat([noisy_image, condition], dim=1)
                 noise_pred = diffusion(input_image, uncond_context, timestamps)
