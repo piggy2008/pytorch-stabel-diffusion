@@ -2,10 +2,11 @@ from clip import CLIP
 from encoder import VAE_Encoder
 from decoder import VAE_Decoder
 from diffusion import Diffusion
+from DiT import DiT
 
 import model_converter
 
-def preload_models_from_standard_weights(ckpt_path, device):
+def preload_models_from_standard_weights(ckpt_path, device, image_size=512):
     state_dict = model_converter.load_from_standard_weights(ckpt_path, device)
 
     encoder = VAE_Encoder().to(device)
@@ -14,7 +15,8 @@ def preload_models_from_standard_weights(ckpt_path, device):
     decoder = VAE_Decoder().to(device)
     decoder.load_state_dict(state_dict['decoder'], strict=True)
 
-    diffusion = Diffusion().to(device)
+    # diffusion = Diffusion().to(device)
+    diffusion = DiT(depth=8, in_channels=8, hidden_size=384, patch_size=4, num_heads=6, input_size=image_size)
     # diffusion.load_state_dict(state_dict['diffusion'], strict=True)
 
     clip = CLIP().to(device)
