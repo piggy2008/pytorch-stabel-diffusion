@@ -42,7 +42,7 @@ tokenizer = CLIPTokenizer(config.get('vocab_file'), merges_file=config.get('merg
 model_file = config.get('pre_trained_param')
 image_root = config.get('img_root_path')
 image_size = config.get('image_size')
-models = model_loader.preload_models_from_standard_weights(model_file, DEVICE, image_size=image_size)
+models = model_loader.preload_models_from_standard_weights(model_file, DEVICE, image_size=(image_size // 4))
 epochs = config.get('epochs')
 batch_size = config.get('batch_size')
 lr_adjust_epoch = config.get('lr_adjust_epoch')
