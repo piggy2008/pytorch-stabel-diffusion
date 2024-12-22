@@ -50,8 +50,10 @@ lr = config.get('lr')
 batch_print_interval = config.get('batch_print_interval')
 checkpoint_save_interval = config.get('checkpoint_save_interval', 1)
 sampler = config.get('sampler_name')
+model_name = config.get('model_name')
 seed = 42
 
+logger.info('unet model:' + model_name)
 logger.info('sampling method:' + sampler)
 logger.info('training set root:' + image_root)
 logger.info('pretrained file:' + model_file)
@@ -88,6 +90,7 @@ output_image = pipeline.train(
     sampler_name=sampler,
     seed=seed,
     models=models,
+    model_name=model_name,
     device=DEVICE,
     tokenizer=tokenizer,
     batch_size=batch_size,
