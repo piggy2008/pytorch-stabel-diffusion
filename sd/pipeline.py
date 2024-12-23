@@ -184,6 +184,7 @@ def generate_all(
     do_cfg=True,
     cfg_scale=7.5,
     sampler_name="ddpm",
+    model_name='DiT',
     n_inference_steps=50,
     models={},
     seed=None,
@@ -292,6 +293,8 @@ def generate_all(
                     time_embedding = get_time_embedding(timestep, 'test').to(device)
                 else:
                     time_embedding = get_time_embedding_rf(torch.tensor([i * d_step]).to(device), device)
+                if model_name == 'DiT':
+                    time_embedding = torch.tensor([i * d_step]).to(device)
 
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
                 model_input = torch.cat([latents, condition], dim=1)
