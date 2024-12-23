@@ -1,6 +1,6 @@
 import model_loader
 import pipeline
-# import pipeline_no_ed
+import pipeline_no_ed
 from PIL import Image
 from pathlib import Path
 from transformers import CLIPTokenizer
@@ -42,7 +42,10 @@ tokenizer = CLIPTokenizer(config.get('vocab_file'), merges_file=config.get('merg
 model_file = config.get('pre_trained_param')
 image_root = config.get('img_root_path')
 image_size = config.get('image_size')
-models = model_loader.preload_models_from_standard_weights(model_file, DEVICE, image_size=(image_size // 8))
+in_channels = config.get('in_channels')
+out_channels = config.get('out_channels')
+models = model_loader.preload_models_from_standard_weights(model_file, DEVICE,
+                                                           in_channels=in_channels, out_channels=out_channels, image_size=(image_size // 8))
 epochs = config.get('epochs')
 batch_size = config.get('batch_size')
 lr_adjust_epoch = config.get('lr_adjust_epoch')
@@ -60,6 +63,8 @@ logger.info('pretrained file:' + model_file)
 logger.info('training total epoch:' + str(epochs))
 logger.info('batch size:' + str(batch_size))
 logger.info('input image size:' + str(image_size))
+logger.info('input channel dim:' + str(in_channels))
+logger.info('output channel dim:' + str(out_channels))
 logger.info('start learning rate:' + str(lr))
 
 ## TEXT TO IMAGE
@@ -85,7 +90,7 @@ strength = 0.9
 
 
 
-output_image = pipeline.train(
+output_image = pipeline_no_ed.train(
     uncond_prompt=uncond_prompt,
     sampler_name=sampler,
     seed=seed,

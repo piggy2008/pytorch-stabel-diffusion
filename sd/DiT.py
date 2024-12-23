@@ -148,16 +148,16 @@ class DiTBlock(nn.Module):
 
 
     def forward(self, x, c, context):
-        print('x before:', x.shape)
+        # print('x before:', x.shape)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
         x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
-        print('x after:', x.shape)
+        # print('x after:', x.shape)
 
         x = x + gate_msa.unsqueeze(1) * self.attn2(modulate(self.norm3(x), shift_msa, scale_msa), context)
         x = x + gate_mlp.unsqueeze(1) * self.mlp2(modulate(self.norm4(x), shift_mlp, scale_mlp))
-        print('x after2:', x.shape)
-        print('-------')
+        # print('x after2:', x.shape)
+        # print('-------')
         return x
 
 
@@ -219,10 +219,10 @@ class DiT(nn.Module):
             DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
 
-        self.transformer_blocks = nn.ModuleList(
-            [BasicTransformerBlock(hidden_size, 1, hidden_size, context_dim=768)
-             for d in range(depth)]
-        )
+        # self.transformer_blocks = nn.ModuleList(
+        #     [BasicTransformerBlock(hidden_size, 1, hidden_size, context_dim=768)
+        #      for d in range(depth)]
+        # )
 
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
@@ -301,7 +301,7 @@ class DiT(nn.Module):
             # control.append(style)
             x = self.blocks[i](x, c, context)  # (N, T, D)
             # print(x.shape)
-            x = self.transformer_blocks[i](x, context)
+            # x = self.transformer_blocks[i](x, context)
         # control.reverse()
         # for i in range(int(self.depth / 2), int(self.depth)):
         #     # print('y:', y.shape, '-----', 'control:', b.shape)

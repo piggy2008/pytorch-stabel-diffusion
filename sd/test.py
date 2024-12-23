@@ -19,12 +19,12 @@ DEVICE = "cuda:3"
 print(f"Using device: {DEVICE}")
 
 
-save_root = '../experiments/checkpoints_241204_174934'
+save_root = '../experiments/checkpoints_241222_123549'
 tokenizer = CLIPTokenizer("../data/vocab.json", merges_file="../data/merges.txt")
 model_file = "../data/v1-5-pruned-emaonly.ckpt"
 models = model_loader.preload_models_from_standard_weights(model_file, DEVICE)
 diffusion = models['diffusion']
-checkpoint = torch.load(os.path.join(save_root, 'sd_diffusion_450.pth'), map_location=DEVICE)
+checkpoint = torch.load(os.path.join(save_root, 'sd_diffusion_100.pth'), map_location=DEVICE)
 diffusion.load_state_dict(checkpoint['model'], strict=True)
 models['diffusion'] = diffusion
 ## TEXT TO IMAGE

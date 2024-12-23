@@ -1,9 +1,9 @@
-epochs: 500 # 训练多少个epoch
-batch_size: 4  # batch_size小一些
+epochs: 1000 # 训练多少个epoch
+batch_size: 6  # batch_size小一些
 lr: 0.00001  # 学习率
 lr_adjust_epoch: 10 # 学习率调整的epoch，降为原有的10%
 batch_print_interval: 100 # 打印间隔，以batch为单位
-checkpoint_save_interval: 10 # 模型保存间隔，以epoch为单位
+checkpoint_save_interval: 100 # 模型保存间隔，以epoch为单位
 save_path: '../experiments'  # 模型保存路径
 use_cfg: True  # 是否使用classifier-free guidance，开启就可以训练条件生成模型了
 device: 'cuda:2' # cuda、cpu、mps(only macbook)
@@ -11,6 +11,8 @@ device: 'cuda:2' # cuda、cpu、mps(only macbook)
 sampler_name: 'rf'
 
 model_name: 'DiT'
+in_channels: 8
+out_channels: 4
 
 # clip param
 vocab_file: '../data/vocab.json'

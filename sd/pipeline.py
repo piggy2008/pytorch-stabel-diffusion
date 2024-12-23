@@ -348,9 +348,9 @@ def train(sampler_name="ddpm",
     image_size=512,
     save_path='',):
     set_seed(44)
-    accelerator = Accelerator(device_placement=False, mixed_precision='no')
-    accelerator.print(f'device {str(accelerator.device)} is used.')
-    device = accelerator.device
+    # accelerator = Accelerator(device_placement=False, mixed_precision='no')
+    # accelerator.print(f'device {str(accelerator.device)} is used.')
+    # device = accelerator.device
     generator = torch.Generator(device=device)
     if seed is None:
         generator.seed()
@@ -444,8 +444,8 @@ def train(sampler_name="ddpm",
                 else:
                     loss = loss_func(noise_pred, noise)
                 loss = loss.mean()
-                # loss.backward()
-                accelerator.backward(loss)
+                loss.backward()
+                # accelerator.backward(loss)
                 optimizer.step()
                 loss_list.append(loss.item())
                 if batch % batch_print_interval == 0:
@@ -462,11 +462,11 @@ def train(sampler_name="ddpm",
                              optimizer=optimizer.state_dict(),
                              epoch=e,
                              loss_list=loss_list)
-            # torch.save(save_dict,
-            #            os.path.join(save_path, f'sd_diffusion_{e}.pth'))
-            accelerator.wait_for_everyone()
+            torch.save(save_dict,
+                       os.path.join(save_path, f'sd_diffusion_{e}.pth'))
+            # accelerator.wait_for_everyone()
             # state = accelerator.get_state_dict(diffusion)
-            accelerator.save(save_dict, save_path + '/sd_diffusion_{}.pth'.format(e))
+            # accelerator.save(save_dict, save_path + '/sd_diffusion_{}.pth'.format(e))
 
     
 def rescale(x, old_range, new_range, clamp=False):
