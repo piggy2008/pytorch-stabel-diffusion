@@ -45,7 +45,7 @@ image_size = config.get('image_size')
 in_channels = config.get('in_channels')
 out_channels = config.get('out_channels')
 models = model_loader.preload_models_from_standard_weights(model_file, DEVICE,
-                                                           in_channels=in_channels, out_channels=out_channels, image_size=(image_size // 8))
+                                                           in_channels=in_channels, out_channels=out_channels, image_size=(image_size))
 epochs = config.get('epochs')
 batch_size = config.get('batch_size')
 lr_adjust_epoch = config.get('lr_adjust_epoch')

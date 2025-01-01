@@ -6,7 +6,7 @@ from DiT import DiT
 
 import model_converter
 
-def preload_models_from_standard_weights(ckpt_path, device, in_channels=8, out_channels=4, image_size=512):
+def preload_models_from_standard_weights(ckpt_path, device, in_channels=6, out_channels=3, image_size=512):
     state_dict = model_converter.load_from_standard_weights(ckpt_path, device)
 
     encoder = VAE_Encoder().to(device)

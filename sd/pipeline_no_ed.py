@@ -14,8 +14,8 @@ from PIL import Image
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 
-WIDTH = 512
-HEIGHT = 512
+WIDTH = 256
+HEIGHT = 256
 LATENTS_WIDTH = WIDTH // 8
 LATENTS_HEIGHT = HEIGHT // 8
 
@@ -291,10 +291,12 @@ def generate_all(
                 # (1, 320)
                 if sampler_name == 'ddpm':
                     time_embedding = get_time_embedding(timestep, 'test').to(device)
+                    if model_name == 'DiT':
+                        time_embedding = torch.tensor([timestep]).to(device)
                 else:
                     time_embedding = get_time_embedding_rf(torch.tensor([i * d_step]).to(device), device)
-                if model_name == 'DiT':
-                    time_embedding = torch.tensor([i * d_step]).to(device)
+                    if model_name == 'DiT':
+                        time_embedding = torch.tensor([i * d_step]).to(device)
 
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
                 model_input = torch.cat([latents, input_image_tensor], dim=1)
@@ -319,7 +321,7 @@ def generate_all(
 
             # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 3, Height, Width)
             # images = decoder(latents)
-            images = rescale(images, (-1, 1), (0, 255), clamp=True)
+            images = rescale(latents, (-1, 1), (0, 255), clamp=True)
             # (Batch_Size, Channel, Height, Width) -> (Batch_Size, Height, Width, Channel)
             images = images.permute(0, 2, 3, 1)
             images = images.to("cpu", torch.uint8).numpy()
@@ -434,7 +436,9 @@ def train(sampler_name="ddpm",
                     # timestamps = get_time_embedding(t).to(device)
                     noisy_image, noise = sampler.add_noise(data_high, t)
                     if model_name == 'DiT':
-                        timestamps = t * n_timestamp
+                        # timestamps = t * n_timestamp
+                        timestamps = t.to(device)
+                        # print(timestamps)
                     else:
                         timestamps = get_time_embedding(t).to(device)
 
