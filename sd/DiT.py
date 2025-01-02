@@ -139,23 +139,21 @@ class DiTBlock(nn.Module):
             nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
 
-        self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn2 = CrossAttention(query_dim=hidden_size, context_dim=768, heads=1, dim_head=hidden_size, dropout=0.)
-        self.norm4 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        # mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        # approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp2 = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        # self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        # self.attn2 = CrossAttention(query_dim=hidden_size, context_dim=768, heads=1, dim_head=hidden_size, dropout=0.)
+        # self.norm4 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        # self.mlp2 = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
 
-    def forward(self, x, c, context):
+    def forward(self, x, c):
         # print('x before:', x.shape)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
         x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         # print('x after:', x.shape)
 
-        x = x + gate_msa.unsqueeze(1) * self.attn2(modulate(self.norm3(x), shift_msa, scale_msa), context)
-        x = x + gate_mlp.unsqueeze(1) * self.mlp2(modulate(self.norm4(x), shift_mlp, scale_mlp))
+        # x = x + gate_msa.unsqueeze(1) * self.attn2(modulate(self.norm3(x), shift_msa, scale_msa), context)
+        # x = x + gate_mlp.unsqueeze(1) * self.mlp2(modulate(self.norm4(x), shift_mlp, scale_mlp))
         # print('x after2:', x.shape)
         # print('-------')
         return x
@@ -219,10 +217,10 @@ class DiT(nn.Module):
             DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
 
-        # self.transformer_blocks = nn.ModuleList(
-        #     [BasicTransformerBlock(hidden_size, 1, hidden_size, context_dim=768)
-        #      for d in range(depth)]
-        # )
+        self.transformer_blocks = nn.ModuleList(
+            [BasicTransformerBlock(hidden_size, 1, hidden_size, context_dim=768)
+             for d in range(depth)]
+        )
 
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
@@ -299,9 +297,9 @@ class DiT(nn.Module):
         for i in range(0, int(self.depth)):
             # style = self.zero_control[i](self.transformer_blocks2[i](self.blocks2[i](x + style, c), context))
             # control.append(style)
-            x = self.blocks[i](x, c, context)  # (N, T, D)
+            x = self.blocks[i](x, c)  # (N, T, D)
             # print(x.shape)
-            # x = self.transformer_blocks[i](x, context)
+            x = self.transformer_blocks[i](x, context)
         # control.reverse()
         # for i in range(int(self.depth / 2), int(self.depth)):
         #     # print('y:', y.shape, '-----', 'control:', b.shape)
@@ -440,12 +438,12 @@ DiT_models = {
 }
 
 if __name__ == '__main__':
-    img = torch.zeros(2, 4, 64, 64)
+    img = torch.zeros(2, 4, 256, 256)
     style_img = torch.zeros(4, 3, 128, 128)
     time = torch.tensor([1, 2])
     t = torch.rand(2) * 1000
     context = torch.zeros(2, 77, 768)
-    model = DiT(depth=8, in_channels=4, hidden_size=384, patch_size=4, num_heads=6, input_size=64)
+    model = DiT(depth=8, in_channels=4, hidden_size=384, patch_size=4, num_heads=6, input_size=256)
     # model2 = StyleFeatures()
     output = model(img, context, t)
     # output = model2(img)
