@@ -2,6 +2,7 @@ import os.path
 
 import model_loader
 import pipeline
+import pipeline_no_ed
 from PIL import Image
 from pathlib import Path
 from transformers import CLIPTokenizer
@@ -19,12 +20,12 @@ DEVICE = "cuda:3"
 print(f"Using device: {DEVICE}")
 
 
-save_root = '../experiments/checkpoints_241222_123549'
+save_root = '../experiments/checkpoints_241231_102241'
 tokenizer = CLIPTokenizer("../data/vocab.json", merges_file="../data/merges.txt")
 model_file = "../data/v1-5-pruned-emaonly.ckpt"
-models = model_loader.preload_models_from_standard_weights(model_file, DEVICE)
+models = model_loader.preload_models_from_standard_weights(model_file, DEVICE, in_channels=6, out_channels=3, image_size=256)
 diffusion = models['diffusion']
-checkpoint = torch.load(os.path.join(save_root, 'sd_diffusion_100.pth'), map_location=DEVICE)
+checkpoint = torch.load(os.path.join(save_root, 'sd_diffusion_300.pth'), map_location=DEVICE)
 diffusion.load_state_dict(checkpoint['model'], strict=True)
 models['diffusion'] = diffusion
 ## TEXT TO IMAGE
@@ -78,7 +79,7 @@ seed = 42
 #     os.makedirs(save_path)
 # Image.fromarray(output_image).save(os.path.join(save_path, image_name))
 
-output_image = pipeline.generate_all(
+output_image = pipeline_no_ed.generate_all(
     prompt=prompt,
     uncond_prompt=uncond_prompt,
     input_image_root=image_root,

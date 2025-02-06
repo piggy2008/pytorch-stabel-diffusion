@@ -276,6 +276,20 @@ class DiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
+    def unpatchify2(self, x, c, p=1):
+        """
+        x: (N, T, patch_size**2 * C)
+        imgs: (N, H, W, C)
+        """
+
+        h = w = int(x.shape[1] ** 0.5)
+        assert h * w == x.shape[1]
+
+        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
+        x = torch.einsum('nhwpqc->nchpwq', x)
+        imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
+        return imgs
+
     def forward(self, x, context, t):
         """
         Forward pass of DiT.
@@ -284,11 +298,12 @@ class DiT(nn.Module):
         y: (N,) tensor of class labels
         """
         # a = self.x_embedder(x)
-        # print(x.shape)
+        # print('before 1', x.shape)
         # print(self.pos_embed.shape)
         x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
         # style = self.style_embedder(style) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
         # style = self.zero_control0(style)
+        # print('before 2', x.shape)
         t = self.t_embedder(t)                   # (N, D)
         # y = self.y_embedder(y, self.training)    # (N, D)
         c = t                                # (N, D)
@@ -298,7 +313,7 @@ class DiT(nn.Module):
             # style = self.zero_control[i](self.transformer_blocks2[i](self.blocks2[i](x + style, c), context))
             # control.append(style)
             x = self.blocks[i](x, c)  # (N, T, D)
-            # print(x.shape)
+            # print('in block', x.shape)
             x = self.transformer_blocks[i](x, context)
         # control.reverse()
         # for i in range(int(self.depth / 2), int(self.depth)):
@@ -311,6 +326,9 @@ class DiT(nn.Module):
         #     x = context_blcok(x, context)
         #     # if count < 6:
         #     #    control.append(self.zero_control[count](x))
+        print(x.shape)
+        yy = self.unpatchify2(x, 384)
+        print(yy.shape)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x
@@ -447,6 +465,6 @@ if __name__ == '__main__':
     # model2 = StyleFeatures()
     output = model(img, context, t)
     # output = model2(img)
-    print(output.shape)
+    print('output size', output.shape)
     total = sum([param.nelement() for param in model.parameters()])
     print('parameter: %.2fM' % (total / 1e6))

@@ -14,25 +14,26 @@ from PIL import Image
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 
-WIDTH = 512
-HEIGHT = 512
+WIDTH = 256
+HEIGHT = 256
 LATENTS_WIDTH = WIDTH // 8
 LATENTS_HEIGHT = HEIGHT // 8
 
+
 def generate(
-    prompt,
-    uncond_prompt=None,
-    input_image=None,
-    strength=0.8,
-    do_cfg=True,
-    cfg_scale=7.5,
-    sampler_name="ddpm",
-    n_inference_steps=50,
-    models={},
-    seed=None,
-    device=None,
-    idle_device=None,
-    tokenizer=None,
+        prompt,
+        uncond_prompt=None,
+        input_image=None,
+        strength=0.8,
+        do_cfg=True,
+        cfg_scale=7.5,
+        sampler_name="ddpm",
+        n_inference_steps=50,
+        models={},
+        seed=None,
+        device=None,
+        idle_device=None,
+        tokenizer=None,
 ):
     with (torch.no_grad()):
         if not 0 < strength <= 1:
@@ -52,7 +53,7 @@ def generate(
 
         clip = models["clip"]
         clip.to(device)
-        
+
         if do_cfg:
             # Convert into a list of length Seq_Len=77
             cond_tokens = tokenizer.batch_encode_plus(
@@ -134,7 +135,7 @@ def generate(
             d_step = 1.0 / n_inference_steps
         for i, timestep in enumerate(timesteps):
             # (1, 320)
-            if  sampler_name == 'ddpm':
+            if sampler_name == 'ddpm':
                 time_embedding = get_time_embedding(timestep, 'test').to(device)
             else:
                 time_embedding = get_time_embedding_rf(torch.tensor([i * d_step]).to(device), device)
@@ -174,23 +175,24 @@ def generate(
         images = images.to("cpu", torch.uint8).numpy()
         return images[0]
 
+
 def generate_all(
-    prompt,
-    uncond_prompt=None,
-    input_image_root=None,
-    image_path='',
-    save_root='',
-    strength=0.8,
-    do_cfg=True,
-    cfg_scale=7.5,
-    sampler_name="ddpm",
-    model_name='DiT',
-    n_inference_steps=50,
-    models={},
-    seed=None,
-    device=None,
-    idle_device=None,
-    tokenizer=None,
+        prompt,
+        uncond_prompt=None,
+        input_image_root=None,
+        image_path='',
+        save_root='',
+        strength=0.8,
+        do_cfg=True,
+        cfg_scale=7.5,
+        sampler_name="ddpm",
+        model_name='DiT',
+        n_inference_steps=50,
+        models={},
+        seed=None,
+        device=None,
+        idle_device=None,
+        tokenizer=None,
 ):
     with (torch.no_grad()):
         if not 0 < strength <= 1:
@@ -291,10 +293,12 @@ def generate_all(
                 # (1, 320)
                 if sampler_name == 'ddpm':
                     time_embedding = get_time_embedding(timestep, 'test').to(device)
+                    if model_name == 'DiT':
+                        time_embedding = torch.tensor([timestep]).to(device)
                 else:
                     time_embedding = get_time_embedding_rf(torch.tensor([i * d_step]).to(device), device)
-                if model_name == 'DiT':
-                    time_embedding = torch.tensor([i * d_step]).to(device)
+                    if model_name == 'DiT':
+                        time_embedding = torch.tensor([i * d_step]).to(device)
 
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
                 model_input = torch.cat([latents, input_image_tensor], dim=1)
@@ -319,7 +323,7 @@ def generate_all(
 
             # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 3, Height, Width)
             # images = decoder(latents)
-            images = rescale(images, (-1, 1), (0, 255), clamp=True)
+            images = rescale(latents, (-1, 1), (0, 255), clamp=True)
             # (Batch_Size, Channel, Height, Width) -> (Batch_Size, Height, Width, Channel)
             images = images.permute(0, 2, 3, 1)
             images = images.to("cpu", torch.uint8).numpy()
@@ -331,22 +335,23 @@ def generate_all(
         to_idle(diffusion)
         # to_idle(decoder)
 
+
 def train(sampler_name="ddpm",
-    uncond_prompt='',
-    n_timestamp=1000,
-    models={},
-    model_name='DiT',
-    seed=None,
-    device=None,
-    tokenizer=None,
-    batch_size=10,
-    epochs=100,
-    lr=0.0001,
-    batch_print_interval=100,
-    checkpoint_save_interval=1,
-    dataroot='',
-    image_size=512,
-    save_path='',):
+          uncond_prompt='',
+          n_timestamp=1000,
+          models={},
+          model_name='DiT',
+          seed=None,
+          device=None,
+          tokenizer=None,
+          batch_size=10,
+          epochs=100,
+          lr=0.0001,
+          batch_print_interval=100,
+          checkpoint_save_interval=1,
+          dataroot='',
+          image_size=512,
+          save_path='', ):
     set_seed(44)
     # accelerator = Accelerator(device_placement=False, mixed_precision='no')
     # accelerator.print(f'device {str(accelerator.device)} is used.')
@@ -358,7 +363,8 @@ def train(sampler_name="ddpm",
         generator.manual_seed(seed)
 
     dataset = LRHRDataset(dataroot=dataroot, datatype='img', split='train', data_len=-1, image_size=image_size)
-    data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4,
+                                              pin_memory=True)
     if sampler_name == "ddpm":
         sampler = DDPMSampler(generator, num_training_steps=n_timestamp)
         # sampler.set_inference_timesteps(n_timestamp)
@@ -391,7 +397,6 @@ def train(sampler_name="ddpm",
     warmUpScheduler = GradualWarmupScheduler(
         optimizer=optimizer, multiplier=2., warm_epoch=epochs // 10,
         after_scheduler=cosineScheduler)
-
 
     # diffusion, optimizer, warmUpScheduler, data_loader = accelerator.prepare(diffusion, optimizer, warmUpScheduler, data_loader)
     latents_shape = (1, 4, LATENTS_HEIGHT, LATENTS_WIDTH)
@@ -434,7 +439,9 @@ def train(sampler_name="ddpm",
                     # timestamps = get_time_embedding(t).to(device)
                     noisy_image, noise = sampler.add_noise(data_high, t)
                     if model_name == 'DiT':
-                        timestamps = t * n_timestamp
+                        # timestamps = t * n_timestamp
+                        timestamps = t.to(device)
+                        # print(timestamps)
                     else:
                         timestamps = get_time_embedding(t).to(device)
 
@@ -466,7 +473,7 @@ def train(sampler_name="ddpm",
                        os.path.join(save_path, f'sd_diffusion_{e}.pth'))
             # accelerator.save_model(diffusion, os.path.join(save_path, f'sd_diffusion_{e}.pth'))
 
-    
+
 def rescale(x, old_range, new_range, clamp=False):
     old_min, old_max = old_range
     new_min, new_max = new_range
@@ -476,6 +483,7 @@ def rescale(x, old_range, new_range, clamp=False):
     if clamp:
         x = x.clamp(new_min, new_max)
     return x
+
 
 def get_time_embedding(timestep, phase='train'):
     # Shape: (160,)
@@ -487,6 +495,7 @@ def get_time_embedding(timestep, phase='train'):
         x = torch.tensor([timestep], dtype=torch.float32)[:, None] * freqs[None]
     # Shape: (1, 160 * 2)
     return torch.cat([torch.cos(x), torch.sin(x)], dim=-1)
+
 
 def get_time_embedding_rf(timestep, device):
     # Shape: (160,)
