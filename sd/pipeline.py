@@ -256,6 +256,7 @@ def generate_all(
         encoder.to(device)
         decoder = models["decoder"]
         decoder.to(device)
+        d_step = 0
         for image_name in image_path:
             image = Image.open(os.path.join(input_image_root, image_name))
 

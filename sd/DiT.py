@@ -15,7 +15,7 @@ import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from spatial_attention import BasicTransformerBlock, CrossAttention
-
+import torch.fft as fft
 
 def calc_mean_std(input, eps=1e-5):
     batch_size, channels = input.shape[:2]
@@ -276,11 +276,13 @@ class DiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
-    def unpatchify2(self, x, c, p=1):
+    def unpatchify2(self, x, c, p):
         """
         x: (N, T, patch_size**2 * C)
         imgs: (N, H, W, C)
         """
+        # c = self.out_channels
+        # p = self.x_embedder.patch_size[0]
 
         h = w = int(x.shape[1] ** 0.5)
         assert h * w == x.shape[1]
@@ -289,6 +291,32 @@ class DiT(nn.Module):
         x = torch.einsum('nhwpqc->nchpwq', x)
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
+    def patchify(self, x):
+        """
+        x: (N, H, W, C)
+        imgs: (N, T(h*w), C)
+        """
+        imgs = x.flatten(2).transpose(1, 2)  # NCHW -> NLC
+
+        return imgs
+
+    def Fourier_filter(self, x, threshold, scale):
+        # FFT
+        x_freq = fft.fftn(x, dim=(-2, -1))
+        x_freq = fft.fftshift(x_freq, dim=(-2, -1))
+
+        B, C, H, W = x_freq.shape
+        mask = torch.ones((B, C, H, W)).cuda()
+
+        crow, ccol = H // 2, W // 2
+        mask[..., crow - threshold:crow + threshold, ccol - threshold:ccol + threshold] = scale
+        x_freq = x_freq * mask
+
+        # IFFT
+        x_freq = fft.ifftshift(x_freq, dim=(-2, -1))
+        x_filtered = fft.ifftn(x_freq, dim=(-2, -1)).real
+
+        return x_filtered
 
     def forward(self, x, context, t):
         """
@@ -309,12 +337,53 @@ class DiT(nn.Module):
         c = t                                # (N, D)
         # count = 0
         control = []
+        # uncond_context = None
+        # if context.shape[0] == 2:
+        #     context, uncond_context = context.chunk(2)
+            # print(context.shape)
+        units = [378, 345, 339, 333, 275, 255, 194, 174, 164, 144, 92, 76]
         for i in range(0, int(self.depth)):
             # style = self.zero_control[i](self.transformer_blocks2[i](self.blocks2[i](x + style, c), context))
             # control.append(style)
+
             x = self.blocks[i](x, c)  # (N, T, D)
             # print('in block', x.shape)
-            x = self.transformer_blocks[i](x, context)
+
+            # if uncond_context is not None:
+            #     if i in [3]:
+            #         x = self.blocks[i](x, c, 1.8 * context)  # (N, T, D)
+            #     else:
+            #         x = self.blocks[i](x, c, context)
+            # else:
+            #     x = self.blocks[i](x, c, context)
+
+            # if i == 1:
+            #     units = [249]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # elif i == 2:
+            #     units = [282]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # elif i == 4:
+            #     units = [124]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # elif i == 6:
+            #     units = [141]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # elif i == 7:
+            #     units = [289]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # print(x.shape)
+            # x = self.transformer_blocks[i](x, context)
         # control.reverse()
         # for i in range(int(self.depth / 2), int(self.depth)):
         #     # print('y:', y.shape, '-----', 'control:', b.shape)
@@ -326,9 +395,9 @@ class DiT(nn.Module):
         #     x = context_blcok(x, context)
         #     # if count < 6:
         #     #    control.append(self.zero_control[count](x))
-        print(x.shape)
-        yy = self.unpatchify2(x, 384)
-        print(yy.shape)
+        # yy = self.unpatchify2(x, 384, 1)
+        # print(yy.shape)
+
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x
