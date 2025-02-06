@@ -1,23 +1,24 @@
-epochs: 1000 # 训练多少个epoch
+epochs: 200 # 训练多少个epoch
 batch_size: 12  # batch_size小一些
 lr: 0.00001  # 学习率
 lr_adjust_epoch: 10 # 学习率调整的epoch，降为原有的10%
 batch_print_interval: 50 # 打印间隔，以batch为单位
-checkpoint_save_interval: 50 # 模型保存间隔，以epoch为单位
+checkpoint_save_interval: 20 # 模型保存间隔，以epoch为单位
 save_path: '../experiments'  # 模型保存路径
+resume_path: '../experiments/checkpoints_250111_173922/sd_diffusion_700.pth'
 use_cfg: True  # 是否使用classifier-free guidance，开启就可以训练条件生成模型了
-device: 'cuda:2' # cuda、cpu、mps(only macbook)
+device: 'cuda:1' # cuda、cpu、mps(only macbook)
 
-sampler_name: 'ddpm'
+sampler_name: 'rf'
 
 model_name: 'DiT'
 in_channels: 6
 out_channels: 3
-
+n_timestamp: 2000
 # clip param
 vocab_file: '../data/vocab.json'
 merge_file: '../data/merges.txt'
-prompt: 'normal images enhanced from underwater scenes'
+prompt: 'remove haze from underwater image'
 uncond_prompt: ''
 
 # pretrained param
