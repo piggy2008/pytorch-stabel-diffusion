@@ -8,7 +8,7 @@ from pathlib import Path
 from transformers import CLIPTokenizer
 import torch
 
-DEVICE = "cuda:3"
+DEVICE = "cuda:0"
 
 # ALLOW_CUDA = True
 # ALLOW_MPS = False
@@ -20,18 +20,18 @@ DEVICE = "cuda:3"
 print(f"Using device: {DEVICE}")
 
 
-save_root = '../experiments/checkpoints_241231_102241'
+save_root = '../experiments/checkpoints_250111_173922'
 tokenizer = CLIPTokenizer("../data/vocab.json", merges_file="../data/merges.txt")
 model_file = "../data/v1-5-pruned-emaonly.ckpt"
 models = model_loader.preload_models_from_standard_weights(model_file, DEVICE, in_channels=6, out_channels=3, image_size=256)
 diffusion = models['diffusion']
-checkpoint = torch.load(os.path.join(save_root, 'sd_diffusion_300.pth'), map_location=DEVICE)
+checkpoint = torch.load(os.path.join(save_root, 'sd_diffusion_999.pth'), map_location=DEVICE)
 diffusion.load_state_dict(checkpoint['model'], strict=True)
 models['diffusion'] = diffusion
 ## TEXT TO IMAGE
 
 # prompt = "A dog with sunglasses, wearing comfy hat, looking at camera, highly detailed, ultra sharp, cinematic, 100mm lens, 8k resolution."
-prompt = "A cat stretching on the floor, highly detailed, ultra sharp, cinematic, 100mm lens, 8k resolution."
+prompt = "remove haze from underwater image"
 uncond_prompt = ""  # Also known as negative prompt
 do_cfg = False
 cfg_scale = 8  # min: 1, max: 14
@@ -42,20 +42,20 @@ cfg_scale = 8  # min: 1, max: 14
 # Comment to disable image to image
 image_name = '851.jpg'
 image_path = '../../../data/UIE-dataset/UIEBD/test/image/' + image_name
-image_root = '../../../data/UIE-dataset/UIEBD/test/image'
+image_root = '../../../data/LSUI/test_input'
 paths = [path for path in os.listdir(image_root)]
 input_image = Image.open(image_path)
 
-save_image_root = save_root + '/results/UIEB'
+save_image_root = save_root + '/results/LSUI'
 # Higher values means more noise will be added to the input image, so the result will further from the input image.
 # Lower values means less noise is added to the input image, so output will be closer to the input image.
 strength = 0.9
 
 ## SAMPLER
 
-sampler = "ddpm"
-num_inference_steps = 20
-seed = 42
+sampler = "rf"
+num_inference_steps = 5
+seed = 66666
 
 # output_image = pipeline.generate(
 #     prompt=prompt,

@@ -15,7 +15,7 @@ import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from spatial_attention import BasicTransformerBlock, CrossAttention
-
+import torch.fft as fft
 
 def calc_mean_std(input, eps=1e-5):
     batch_size, channels = input.shape[:2]
@@ -139,21 +139,23 @@ class DiTBlock(nn.Module):
             nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
 
-        # self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        # self.attn2 = CrossAttention(query_dim=hidden_size, context_dim=768, heads=1, dim_head=hidden_size, dropout=0.)
-        # self.norm4 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        # self.mlp2 = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.attn2 = CrossAttention(query_dim=hidden_size, context_dim=768, heads=1, dim_head=hidden_size, dropout=0.)
+        self.norm4 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        # mlp_hidden_dim = int(hidden_size * mlp_ratio)
+        # approx_gelu = lambda: nn.GELU(approximate="tanh")
+        self.mlp2 = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
 
-    def forward(self, x, c):
+    def forward(self, x, c, context):
         # print('x before:', x.shape)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
         x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         # print('x after:', x.shape)
 
-        # x = x + gate_msa.unsqueeze(1) * self.attn2(modulate(self.norm3(x), shift_msa, scale_msa), context)
-        # x = x + gate_mlp.unsqueeze(1) * self.mlp2(modulate(self.norm4(x), shift_mlp, scale_mlp))
+        x = x + gate_msa.unsqueeze(1) * self.attn2(modulate(self.norm3(x), shift_msa, scale_msa), context)
+        x = x + gate_mlp.unsqueeze(1) * self.mlp2(modulate(self.norm4(x), shift_mlp, scale_mlp))
         # print('x after2:', x.shape)
         # print('-------')
         return x
@@ -217,10 +219,10 @@ class DiT(nn.Module):
             DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
 
-        self.transformer_blocks = nn.ModuleList(
-            [BasicTransformerBlock(hidden_size, 1, hidden_size, context_dim=768)
-             for d in range(depth)]
-        )
+        # self.transformer_blocks = nn.ModuleList(
+        #     [BasicTransformerBlock(hidden_size, 1, hidden_size, context_dim=768)
+        #      for d in range(depth)]
+        # )
 
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
@@ -276,6 +278,48 @@ class DiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
+    def unpatchify2(self, x, c, p):
+        """
+        x: (N, T, patch_size**2 * C)
+        imgs: (N, H, W, C)
+        """
+        # c = self.out_channels
+        # p = self.x_embedder.patch_size[0]
+        h = w = int(x.shape[1] ** 0.5)
+        assert h * w == x.shape[1]
+
+        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
+        x = torch.einsum('nhwpqc->nchpwq', x)
+        imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
+        return imgs
+
+    def patchify(self, x):
+        """
+        x: (N, H, W, C)
+        imgs: (N, T(h*w), C)
+        """
+        imgs = x.flatten(2).transpose(1, 2)  # NCHW -> NLC
+
+        return imgs
+
+    def Fourier_filter(self, x, threshold, scale):
+        # FFT
+        x_freq = fft.fftn(x, dim=(-2, -1))
+        x_freq = fft.fftshift(x_freq, dim=(-2, -1))
+
+        B, C, H, W = x_freq.shape
+        mask = torch.ones((B, C, H, W)).cuda()
+
+        crow, ccol = H // 2, W // 2
+        mask[..., crow - threshold:crow + threshold, ccol - threshold:ccol + threshold] = scale
+        x_freq = x_freq * mask
+
+        # IFFT
+        x_freq = fft.ifftshift(x_freq, dim=(-2, -1))
+        x_filtered = fft.ifftn(x_freq, dim=(-2, -1)).real
+
+        return x_filtered
+
     def forward(self, x, context, t):
         """
         Forward pass of DiT.
@@ -294,12 +338,61 @@ class DiT(nn.Module):
         c = t                                # (N, D)
         # count = 0
         control = []
+        # uncond_context = None
+        # if context.shape[0] == 2:
+        #     context, uncond_context = context.chunk(2)
+            # print(context.shape)
+        units = [378, 345, 339, 333, 275, 255, 194, 174, 164, 144, 92, 76]
         for i in range(0, int(self.depth)):
             # style = self.zero_control[i](self.transformer_blocks2[i](self.blocks2[i](x + style, c), context))
             # control.append(style)
-            x = self.blocks[i](x, c)  # (N, T, D)
+            # if uncond_context is not None:
+            #     if i in [3]:
+            #         x = self.blocks[i](x, c, 1.8 * context)  # (N, T, D)
+            #     else:
+            #         x = self.blocks[i](x, c, context)
+            # else:
+            #     x = self.blocks[i](x, c, context)
+            x = self.blocks[i](x, c, context)
+            if i == 0:
+                x = self.unpatchify2(x, 384, 1)
+                # x[:, units, :, :] = self.Fourier_filter(x[:, units, :, :], threshold=1, scale=0.6)
+                hidden_mean = x.mean(1).unsqueeze(1)
+                B = hidden_mean.shape[0]
+                hidden_max, _ = torch.max(hidden_mean.view(B, -1), dim=-1, keepdim=True)
+                hidden_min, _ = torch.min(hidden_mean.view(B, -1), dim=-1, keepdim=True)
+                hidden_mean = (hidden_mean - hidden_min.unsqueeze(2).unsqueeze(3)) / \
+                              (hidden_max - hidden_min).unsqueeze(2).unsqueeze(3)
+
+                x = x * ((1.2 - 1) * hidden_mean + 1)
+                x = self.patchify(x)
+            # if i == 1:
+            #     units = [249]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # elif i == 2:
+            #     units = [282]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # elif i == 4:
+            #     units = [124]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # elif i == 6:
+            #     units = [141]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
+            # elif i == 7:
+            #     units = [289]
+            #     x = self.unpatchify2(x, 384, 1)
+            #     x[:, units, :, :] = x[:, units, :, :] * 0.8
+            #     x = self.patchify(x)
             # print(x.shape)
-            x = self.transformer_blocks[i](x, context)
+            # x = self.transformer_blocks[i](x, context)
         # control.reverse()
         # for i in range(int(self.depth / 2), int(self.depth)):
         #     # print('y:', y.shape, '-----', 'control:', b.shape)
@@ -311,6 +404,8 @@ class DiT(nn.Module):
         #     x = context_blcok(x, context)
         #     # if count < 6:
         #     #    control.append(self.zero_control[count](x))
+        # yy = self.unpatchify2(x, 384, 1)
+        # print(yy.shape)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x

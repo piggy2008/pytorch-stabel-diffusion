@@ -23,12 +23,15 @@ def generate(
     prompt,
     uncond_prompt=None,
     input_image=None,
+    model_name='DiT',
+    timestamps=2000,
     strength=0.8,
     do_cfg=True,
     cfg_scale=7.5,
     sampler_name="ddpm",
     n_inference_steps=50,
-    models={},
+    models=None,
+    clip=None,
     seed=None,
     device=None,
     idle_device=None,
@@ -50,7 +53,7 @@ def generate(
         else:
             generator.manual_seed(seed)
 
-        clip = models["clip"]
+
         clip.to(device)
         
         if do_cfg:
@@ -93,54 +96,32 @@ def generate(
 
         latents_shape = (1, 4, LATENTS_HEIGHT, LATENTS_WIDTH)
 
-        if input_image:
-            encoder = models["encoder"]
-            encoder.to(device)
 
-            input_image_tensor = input_image.resize((WIDTH, HEIGHT))
-            # (Height, Width, Channel)
-            input_image_tensor = np.array(input_image_tensor)
-            # (Height, Width, Channel) -> (Height, Width, Channel)
-            input_image_tensor = torch.tensor(input_image_tensor, dtype=torch.float32, device=device)
-            # (Height, Width, Channel) -> (Height, Width, Channel)
-            input_image_tensor = rescale(input_image_tensor, (0, 255), (-1, 1))
-            # (Height, Width, Channel) -> (Batch_Size, Height, Width, Channel)
-            input_image_tensor = input_image_tensor.unsqueeze(0)
-            # (Batch_Size, Height, Width, Channel) -> (Batch_Size, Channel, Height, Width)
-            input_image_tensor = input_image_tensor.permute(0, 3, 1, 2)
+        input_image_tensor = input_image.resize((WIDTH, HEIGHT))
+        # (Height, Width, Channel)
+        input_image_tensor = np.array(input_image_tensor)
+        # (Height, Width, Channel) -> (Height, Width, Channel)
+        input_image_tensor = torch.tensor(input_image_tensor, dtype=torch.float32, device=device)
+        # (Height, Width, Channel) -> (Height, Width, Channel)
+        input_image_tensor = rescale(input_image_tensor, (0, 255), (-1, 1))
+        # (Height, Width, Channel) -> (Batch_Size, Height, Width, Channel)
+        input_image_tensor = input_image_tensor.unsqueeze(0)
+        # (Batch_Size, Height, Width, Channel) -> (Batch_Size, Channel, Height, Width)
+        input_image_tensor = input_image_tensor.permute(0, 3, 1, 2)
 
-            # (Batch_Size, 4, Latents_Height, Latents_Width)
-            encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
-            # (Batch_Size, 4, Latents_Height, Latents_Width)
-            condition = encoder(input_image_tensor, encoder_noise)
-
-            # Add noise to the latents (the encoded input image)
-            # (Batch_Size, 4, Latents_Height, Latents_Width)
-            # sampler.set_strength(strength=strength)
-            # latents = sampler.add_noise(latents, sampler.timesteps[0])
-
-            to_idle(encoder)
-        else:
-            # (Batch_Size, 4, Latents_Height, Latents_Width)
-            latents = torch.randn(latents_shape, generator=generator, device=device)
-
-        diffusion = models["diffusion"]
+        diffusion = models
         diffusion.to(device)
-        latents = torch.randn(latents_shape, generator=generator, device=device)
-        if sampler_name == 'ddpm':
-            timesteps = tqdm(sampler.timesteps)
-        else:
-            timesteps = tqdm(torch.from_numpy(np.arange(0, n_inference_steps)[::-1].copy()))
-            d_step = 1.0 / n_inference_steps
-        for i, timestep in enumerate(timesteps):
-            # (1, 320)
-            if  sampler_name == 'ddpm':
-                time_embedding = get_time_embedding(timestep, 'test').to(device)
-            else:
-                time_embedding = get_time_embedding_rf(torch.tensor([i * d_step]).to(device), device)
+        latents = torch.randn_like(input_image_tensor, device=device)
 
-            # (Batch_Size, 4, Latents_Height, Latents_Width)
-            model_input = torch.cat([latents, condition], dim=1)
+        # timesteps = tqdm(torch.from_numpy(np.arange(0, n_inference_steps)[::-1].copy()))
+        d_step = 1.0 / n_inference_steps
+
+        for j in tqdm(range(n_inference_steps)):
+            if model_name == 'DiT':
+                time_embedding = torch.tensor([j * d_step * timestamps]).to(device)
+
+                # (Batch_Size, 4, Latents_Height, Latents_Width)
+            model_input = torch.cat([input_image_tensor, latents], dim=1)
 
             if do_cfg:
                 # (Batch_Size, 4, Latents_Height, Latents_Width) -> (2 * Batch_Size, 4, Latents_Height, Latents_Width)
@@ -155,20 +136,9 @@ def generate(
                 model_output = cfg_scale * (output_cond - output_uncond) + output_uncond
 
             # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
-            if sampler_name == 'ddpm':
-                latents = sampler.step(timestep, latents, model_output)
-            else:
-                latents = sampler.euler(latents, model_output, d_step)
+            latents = sampler.euler(latents, model_output, d_step)
 
-        to_idle(diffusion)
-
-        decoder = models["decoder"]
-        decoder.to(device)
-        # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 3, Height, Width)
-        images = decoder(latents)
-        to_idle(decoder)
-
-        images = rescale(images, (-1, 1), (0, 255), clamp=True)
+        images = rescale(latents, (-1, 1), (0, 255), clamp=True)
         # (Batch_Size, Channel, Height, Width) -> (Batch_Size, Height, Width, Channel)
         images = images.permute(0, 2, 3, 1)
         images = images.to("cpu", torch.uint8).numpy()
@@ -186,6 +156,7 @@ def generate_all(
     sampler_name="ddpm",
     model_name='DiT',
     n_inference_steps=50,
+    timestamps=2000,
     models={},
     seed=None,
     device=None,
@@ -242,7 +213,7 @@ def generate_all(
         to_idle(clip)
 
         if sampler_name == 'ddpm':
-            sampler = DDPMSampler(generator)
+            sampler = DDPMSampler(generator, num_training_steps=timestamps)
             sampler.set_inference_timesteps(n_inference_steps)
         elif sampler_name == 'rf':
             sampler = RectifiedFlow()
@@ -281,44 +252,60 @@ def generate_all(
             # sampler.set_strength(strength=strength)
             # latents = sampler.add_noise(latents, sampler.timesteps[0])
 
-            latents = torch.randn_like(input_image_tensor, device=device)
+            latents = torch.randn(input_image_tensor.shape, generator=generator, device=device)
             if sampler_name == 'ddpm':
                 timesteps = tqdm(sampler.timesteps)
-            else:
-                timesteps = tqdm(torch.from_numpy(np.arange(0, n_inference_steps)[::-1].copy()))
-                d_step = 1.0 / n_inference_steps
-            for i, timestep in enumerate(timesteps):
-                # (1, 320)
-                if sampler_name == 'ddpm':
-                    time_embedding = get_time_embedding(timestep, 'test').to(device)
+                for i, timestep in enumerate(timesteps):
+                    # (1, 320)
                     if model_name == 'DiT':
                         time_embedding = torch.tensor([timestep]).to(device)
-                else:
-                    time_embedding = get_time_embedding_rf(torch.tensor([i * d_step]).to(device), device)
-                    if model_name == 'DiT':
-                        time_embedding = torch.tensor([i * d_step]).to(device)
+                    else:
+                        time_embedding = get_time_embedding(timestep, 'test').to(device)
+                    # (Batch_Size, 4, Latents_Height, Latents_Width)
+                    model_input = torch.cat([input_image_tensor, latents], dim=1)
 
-                # (Batch_Size, 4, Latents_Height, Latents_Width)
-                model_input = torch.cat([latents, input_image_tensor], dim=1)
+                    if do_cfg:
+                        # (Batch_Size, 4, Latents_Height, Latents_Width) -> (2 * Batch_Size, 4, Latents_Height, Latents_Width)
+                        model_input = model_input.repeat(2, 1, 1, 1)
 
-                if do_cfg:
-                    # (Batch_Size, 4, Latents_Height, Latents_Width) -> (2 * Batch_Size, 4, Latents_Height, Latents_Width)
-                    model_input = model_input.repeat(2, 1, 1, 1)
+                    # model_output is the predicted noise
+                    # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
+                    model_output = diffusion(model_input, context, time_embedding)
 
-                # model_output is the predicted noise
-                # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
-                model_output = diffusion(model_input, context, time_embedding)
+                    if do_cfg:
+                        output_cond, output_uncond = model_output.chunk(2)
+                        model_output = cfg_scale * (output_cond - output_uncond) + output_uncond
 
-                if do_cfg:
-                    output_cond, output_uncond = model_output.chunk(2)
-                    model_output = cfg_scale * (output_cond - output_uncond) + output_uncond
+                    # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
 
-                # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
-                if sampler_name == 'ddpm':
                     latents = sampler.step(timestep, latents, model_output)
-                else:
-                    latents = sampler.euler(latents, model_output, d_step)
 
+            else:
+                # timesteps = tqdm(torch.from_numpy(np.arange(0, n_inference_steps)[::-1].copy()))
+                d_step = 1.0 / n_inference_steps
+
+                for j in tqdm(range(n_inference_steps)):
+                    if model_name == 'DiT':
+                        time_embedding = torch.tensor([j * d_step * timestamps]).to(device)
+                    else:
+                        time_embedding = get_time_embedding(timestep, 'test').to(device)
+                        # (Batch_Size, 4, Latents_Height, Latents_Width)
+                    model_input = torch.cat([input_image_tensor, latents], dim=1)
+
+                    if do_cfg:
+                        model_input = model_input.repeat(2, 1, 1, 1)
+
+                    # model_output is the predicted noise
+                    # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
+                    model_output = diffusion(model_input, context, time_embedding)
+                    # output_cond = diffusion(model_input, context, time_embedding)
+                    # output_uncond = diffusion(model_input, context[1].unsqueeze(0), time_embedding)
+                    if do_cfg:
+                        output_cond, output_uncond = model_output.chunk(2)
+                        model_output = cfg_scale * (output_cond - output_uncond) + output_uncond
+
+                    # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
+                    latents = sampler.euler(latents, model_output, d_step)
             # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 3, Height, Width)
             # images = decoder(latents)
             images = rescale(latents, (-1, 1), (0, 255), clamp=True)
@@ -334,6 +321,7 @@ def generate_all(
         # to_idle(decoder)
 
 def train(sampler_name="ddpm",
+    prompt='',
     uncond_prompt='',
     n_timestamp=1000,
     models={},
@@ -348,7 +336,8 @@ def train(sampler_name="ddpm",
     checkpoint_save_interval=1,
     dataroot='',
     image_size=512,
-    save_path='',):
+    save_path='',
+    resume_path=''):
     set_seed(44)
     # accelerator = Accelerator(device_placement=False, mixed_precision='no')
     # accelerator.print(f'device {str(accelerator.device)} is used.')
@@ -370,6 +359,8 @@ def train(sampler_name="ddpm",
         raise ValueError("Unknown sampler value %s. ")
 
     diffusion = models["diffusion"]
+    if resume_path is not None:
+        load_part_of_model(diffusion, resume_path, True)
     diffusion.to(device)
 
     # encoder = models["encoder"]
@@ -421,6 +412,16 @@ def train(sampler_name="ddpm",
                 # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
                 uncond_context = clip(uncond_tokens)
                 uncond_context = uncond_context.repeat(b, 1, 1)
+
+                cond_tokens = tokenizer.batch_encode_plus(
+                    [prompt], padding="max_length", max_length=77
+                ).input_ids
+                # (Batch_Size, Seq_Len)
+                cond_tokens = torch.tensor(cond_tokens, dtype=torch.long, device=device)
+                # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
+                cond_context = clip(cond_tokens)
+                cond_context = cond_context.repeat(b, 1, 1)
+                context = torch.cat([cond_context, uncond_context])
                 # data_concate = torch.cat([data_color, snr_map], dim=1)
                 optimizer.zero_grad()
 
@@ -428,7 +429,7 @@ def train(sampler_name="ddpm",
                     t = torch.rand(b).to(device)
                     noisy_image, noise = sampler.create_flow(data_high, t)
                     if model_name == 'DiT':
-                        timestamps = t * n_timestamp
+                        timestamps = (t * n_timestamp).long()
                     else:
                         timestamps = get_time_embedding_rf(t, device)
                 else:
@@ -442,9 +443,13 @@ def train(sampler_name="ddpm",
                     else:
                         timestamps = get_time_embedding(t).to(device)
 
-                input_image = torch.cat([noisy_image, data_low], dim=1)
-                noise_pred = diffusion(input_image, uncond_context, timestamps)
+                input_image = torch.cat([data_low, noisy_image], dim=1)
+                input_image = torch.cat([input_image, input_image.clone()], dim=0)
+                timestamps = torch.cat([timestamps, timestamps.clone()], dim=0)
+                noise_pred = diffusion(input_image, context, timestamps)
                 if sampler_name == 'rf':
+                    data_high = torch.cat([data_high, data_high.clone()], dim=0)
+                    noise = torch.cat([noise, noise.clone()], dim=0)
                     loss = loss_func(noise_pred, data_high - noise)
                 else:
                     loss = loss_func(noise_pred, noise)
@@ -500,3 +505,20 @@ def get_time_embedding_rf(timestep, device):
     x = timestep[:, None] * freqs[None]
     # Shape: (1, 160 * 2)
     return torch.cat([torch.cos(x), torch.sin(x)], dim=-1)
+
+def load_part_of_model(new_model, src_model_path, s):
+    src_model = torch.load(src_model_path)['model']
+    m_dict = new_model.state_dict()
+    for k in src_model.keys():
+        if k in m_dict.keys():
+            param = src_model.get(k)
+            if param.shape == m_dict[k].data.shape:
+                m_dict[k].data = param
+                print('loading:', k)
+            else:
+                print('shape is different, not loading:', k)
+        else:
+            print('not loading:', k)
+
+    new_model.load_state_dict(m_dict, strict=s)
+    return new_model

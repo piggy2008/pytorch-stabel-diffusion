@@ -54,6 +54,8 @@ batch_print_interval = config.get('batch_print_interval')
 checkpoint_save_interval = config.get('checkpoint_save_interval', 1)
 sampler = config.get('sampler_name')
 model_name = config.get('model_name')
+resume_path = config.get('resume_path')
+timesteps = config.get('n_timestamp')
 seed = 42
 
 logger.info('unet model:' + model_name)
@@ -66,6 +68,7 @@ logger.info('input image size:' + str(image_size))
 logger.info('input channel dim:' + str(in_channels))
 logger.info('output channel dim:' + str(out_channels))
 logger.info('start learning rate:' + str(lr))
+logger.info('resume path:' + resume_path)
 
 ## TEXT TO IMAGE
 
@@ -92,6 +95,8 @@ strength = 0.9
 
 output_image = pipeline_no_ed.train(
     uncond_prompt=uncond_prompt,
+    prompt=prompt,
+    n_timestamp=timesteps,
     sampler_name=sampler,
     seed=seed,
     models=models,
@@ -105,7 +110,8 @@ output_image = pipeline_no_ed.train(
     batch_print_interval=batch_print_interval,
     checkpoint_save_interval=checkpoint_save_interval,
     dataroot=image_root,
-    save_path=experiments_root
+    save_path=experiments_root,
+    resume_path=resume_path
 )
 
 # Combine the input image and the output image into a single image.
