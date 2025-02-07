@@ -11,9 +11,10 @@ import logging
 from diffusion import Diffusion
 from PIL import Image
 
-from accelerate import Accelerator
+# from accelerate import Accelerator
 from accelerate.utils import set_seed
-
+from Dark_channel_loss import DarkChannelLoss
+from CDPRs import DistillationGuidedRouting
 WIDTH = 256
 HEIGHT = 256
 LATENTS_WIDTH = WIDTH // 8
@@ -388,7 +389,6 @@ def train(sampler_name="ddpm",
         after_scheduler=cosineScheduler)
 
     # diffusion, optimizer, warmUpScheduler, data_loader = accelerator.prepare(diffusion, optimizer, warmUpScheduler, data_loader)
-    latents_shape = (1, 4, LATENTS_HEIGHT, LATENTS_WIDTH)
     os.makedirs(save_path, exist_ok=True)
     loss_list = []
     # num = 0
@@ -474,6 +474,176 @@ def train(sampler_name="ddpm",
                              loss_list=loss_list)
             torch.save(save_dict,
                        os.path.join(save_path, f'sd_diffusion_{e}.pth'))
+            # accelerator.save_model(diffusion, os.path.join(save_path, f'sd_diffusion_{e}.pth'))
+
+def train_cdrps(sampler_name="ddpm",
+          prompt='',
+          uncond_prompt='',
+          n_timestamp=1000,
+          models={},
+          model_name='DiT',
+          seed=None,
+          device=None,
+          tokenizer=None,
+          batch_size=10,
+          epochs=100,
+          lr=0.0001,
+          batch_print_interval=100,
+          checkpoint_save_interval=1,
+          dataroot='',
+          image_size=512,
+          save_path='',
+          resume_path=''):
+    set_seed(44)
+    # accelerator = Accelerator(device_placement=False, mixed_precision='no')
+    # accelerator.print(f'device {str(accelerator.device)} is used.')
+    # device = accelerator.device
+    generator = torch.Generator(device=device)
+    if seed is None:
+        generator.seed()
+    else:
+        generator.manual_seed(seed)
+
+    dataset = LRHRDataset(dataroot=dataroot, datatype='img', split='train', data_len=-1, image_size=image_size)
+    data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4,
+                                              pin_memory=True)
+    if sampler_name == "ddpm":
+        sampler = DDPMSampler(generator, num_training_steps=n_timestamp)
+        # sampler.set_inference_timesteps(n_timestamp)
+    elif sampler_name == "rf":
+        sampler = RectifiedFlow()
+    else:
+        raise ValueError("Unknown sampler value %s. ")
+
+    diffusion = models["diffusion"]
+    if resume_path is not None:
+        load_part_of_model(diffusion, resume_path, True)
+    diffusion.to(device)
+
+    # encoder = models["encoder"]
+    # encoder.to(device)
+    # encoder.eval()
+    # decoder = models["decoder"]
+    # decoder.to(device)
+    # decoder.eval()
+    clip = models["clip"]
+    clip.to(device)
+    clip.eval()
+
+    layers_to_gate = ['blocks.0', 'blocks.1', 'blocks.2', 'blocks.3', 'blocks.4', 'blocks.5', 'blocks.6', 'blocks.7']  # Specify layers to gate
+    gamma = 0.05
+    dgr = DistillationGuidedRouting(diffusion, layers_to_gate, device)
+    diffusion.eval()
+
+    loss_func = nn.MSELoss(reduction='mean').to(device)
+    dcp_loss_fn = DarkChannelLoss(patch_size=15, lambda_smooth=1e-4, weight=0.1).to(device)
+    logger = logging.getLogger('base')
+
+    optimizer = torch.optim.AdamW(
+        [gate.lambdas for gate in dgr.gates.values()], lr=lr, weight_decay=1e-4)
+    cosineScheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer=optimizer, T_max=1000, eta_min=0, last_epoch=-1)
+    warmUpScheduler = GradualWarmupScheduler(
+        optimizer=optimizer, multiplier=2., warm_epoch=epochs // 10,
+        after_scheduler=cosineScheduler)
+
+    # diffusion, optimizer, warmUpScheduler, data_loader = accelerator.prepare(diffusion, optimizer, warmUpScheduler, data_loader)
+    os.makedirs(save_path, exist_ok=True)
+    loss_list = []
+    # num = 0
+    for e in range(epochs):
+
+        with tqdm(data_loader, dynamic_ncols=True) as tqdmDataLoader:
+            for batch, data in enumerate(tqdmDataLoader):
+                data_high = data['high'].to(device)
+                data_low = data['low'].to(device)
+                [b, c, h, w] = data_high.shape
+                # encoder -> 3, 512, 512 to 4, 512//8, 512//8
+                # encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
+                # (Batch_Size, 4, Latents_Height, Latents_Width)
+                # image_en = encoder(torch.cat([data_high, data_low], dim=0), encoder_noise)
+                # image_en, condition = image_en.chunk(2, dim=0)
+
+                uncond_tokens = tokenizer.batch_encode_plus(
+                    [uncond_prompt], padding="max_length", max_length=77
+                ).input_ids
+                # (Batch_Size, Seq_Len)
+                uncond_tokens = torch.tensor(uncond_tokens, dtype=torch.long, device=device)
+                # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
+                uncond_context = clip(uncond_tokens)
+                uncond_context = uncond_context.repeat(b, 1, 1)
+
+                # cond_tokens = tokenizer.batch_encode_plus(
+                #     [prompt], padding="max_length", max_length=77
+                # ).input_ids
+                # # (Batch_Size, Seq_Len)
+                # cond_tokens = torch.tensor(cond_tokens, dtype=torch.long, device=device)
+                # # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
+                # cond_context = clip(cond_tokens)
+                # cond_context = cond_context.repeat(b, 1, 1)
+                # context = torch.cat([cond_context, uncond_context])
+                # data_concate = torch.cat([data_color, snr_map], dim=1)
+                optimizer.zero_grad()
+
+                if sampler_name == 'rf':
+                    t = torch.rand(b).to(device)
+                    noisy_image, noise = sampler.create_flow(data_high, t)
+                    if model_name == 'DiT':
+                        timestamps = (t * n_timestamp).long()
+                    else:
+                        timestamps = get_time_embedding_rf(t, device)
+                else:
+                    t = torch.randint(0, n_timestamp, (b,)).long()
+                    # timestamps = get_time_embedding(t).to(device)
+                    noisy_image, noise = sampler.add_noise(data_high, t)
+                    if model_name == 'DiT':
+                        # timestamps = t * n_timestamp
+                        timestamps = t.to(device)
+                        # print(timestamps)
+                    else:
+                        timestamps = get_time_embedding(t).to(device)
+
+                input_image = torch.cat([data_low, noisy_image], dim=1)
+                noise_pred = dgr.model(input_image, uncond_context, timestamps)
+                # input_image = torch.cat([input_image, input_image.clone()], dim=0)
+                # timestamps = torch.cat([timestamps, timestamps.clone()], dim=0)
+
+                if sampler_name == 'rf':
+                    # data_high = torch.cat([data_high, data_high.clone()], dim=0)
+                    # noise = torch.cat([noise, noise.clone()], dim=0)
+                    loss = loss_func(noise_pred, data_high - noise)
+                    one_step_high = sampler.euler(noisy_image, noise_pred, timestamps)
+                    one_step = rescale(one_step_high, (-1, 1), (0, 1), clamp=True)
+                    data_high_normal = rescale(data_high, (-1, 1), (0, 1), clamp=True)
+                    loss_dcp = dcp_loss_fn(one_step, data_high_normal)
+                    loss += loss_dcp
+
+                    loss += gamma * sum(torch.norm(gate.lambdas, p=1) for gate in dgr.gates.values())
+                else:
+                    loss = loss_func(noise_pred, noise)
+                loss = loss.mean()
+                loss.backward()
+                # accelerator.backward(loss)
+                optimizer.step()
+                loss_list.append(loss.item())
+                if batch % batch_print_interval == 0:
+                    # print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
+                    logger.info('[Epoch {}] [batch {}] loss: {}'.format(e, batch, loss.item()))
+
+        warmUpScheduler.step()
+
+        if e % checkpoint_save_interval == 0 or e == epochs - 1:
+            print(f'Saving model {e} to {save_path}...')
+            logger.info('Saving model {} to {}...'.format(e, save_path))
+            save_dict = dict(model=diffusion.state_dict(),
+                             optimizer=optimizer.state_dict(),
+                             epoch=e,
+                             loss_list=loss_list)
+            torch.save(save_dict,
+                       os.path.join(save_path, f'sd_diffusion_{e}.pth'))
+
+            torch.save({layer: gates.cpu() for layer, gates in dgr.gates.items()}, os.path.join(save_path, f'control_gates_{e}.pth'))
+            print("Optimized control gates saved.")
             # accelerator.save_model(diffusion, os.path.join(save_path, f'sd_diffusion_{e}.pth'))
 
 
