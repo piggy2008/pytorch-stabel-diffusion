@@ -41,7 +41,8 @@ def generate(
 ):
     with (torch.no_grad()):
         if not 0 < strength <= 1:
-            raise ValueError("strength must be between 0 and 1")
+            raise ValueError\
+                ("strength must be between 0 and 1")
 
         if idle_device:
             to_idle = lambda x: x.to(idle_device)
@@ -530,7 +531,7 @@ def train_cdrps(sampler_name="ddpm",
     clip.to(device)
     clip.eval()
 
-    layers_to_gate = ['blocks.0', 'blocks.1', 'blocks.2', 'blocks.3', 'blocks.4', 'blocks.5', 'blocks.6', 'blocks.7']  # Specify layers to gate
+    layers_to_gate = range(0, 8)  # Specify layers to gate
     gamma = 0.05
     dgr = DistillationGuidedRouting(diffusion, layers_to_gate, device)
     diffusion.eval()
@@ -612,13 +613,19 @@ def train_cdrps(sampler_name="ddpm",
                     # data_high = torch.cat([data_high, data_high.clone()], dim=0)
                     # noise = torch.cat([noise, noise.clone()], dim=0)
                     loss = loss_func(noise_pred, data_high - noise)
-                    one_step_high = sampler.euler(noisy_image, noise_pred, timestamps)
+                    print('diffusion loss:', loss.item())
+                    # print(noisy_image.shape)
+                    # print(noise_pred.shape)
+                    # print(timestamps.shape)
+                    one_step_high = sampler.euler(noisy_image, noise_pred, timestamps.reshape([b, 1, 1, 1]))
                     one_step = rescale(one_step_high, (-1, 1), (0, 1), clamp=True)
                     data_high_normal = rescale(data_high, (-1, 1), (0, 1), clamp=True)
                     loss_dcp = dcp_loss_fn(one_step, data_high_normal)
                     loss += loss_dcp
+                    loss_lamda = gamma * sum(torch.norm(gate.lambdas, p=1) for gate in dgr.gates.values())
+                    loss += loss_lamda
 
-                    loss += gamma * sum(torch.norm(gate.lambdas, p=1) for gate in dgr.gates.values())
+                    print('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
                 else:
                     loss = loss_func(noise_pred, noise)
                 loss = loss.mean()
