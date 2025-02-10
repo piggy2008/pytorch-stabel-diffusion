@@ -22,7 +22,7 @@ print(f"Using device: {DEVICE}")
 
 
 save_root = '../experiments/checkpoints_250111_173922'
-
+gates_pretrained = os.path.join(save_root, 'control_gates_100.pth')
 tokenizer = CLIPTokenizer("../data/vocab.json", merges_file="../data/merges.txt")
 model_file = "../data/v1-5-pruned-emaonly.ckpt"
 models = model_loader.preload_models_from_standard_weights(model_file, DEVICE, in_channels=6, out_channels=3, image_size=256)
@@ -83,7 +83,7 @@ seed = 66666
 #     os.makedirs(save_path)
 # Image.fromarray(output_image).save(os.path.join(save_path, image_name))
 
-output_image = pipeline_no_ed.generate_all(
+output_image = pipeline_no_ed.generate_all_cdprs(
     prompt=prompt,
     uncond_prompt=uncond_prompt,
     input_image_root=image_root,
@@ -99,4 +99,5 @@ output_image = pipeline_no_ed.generate_all(
     device=DEVICE,
     idle_device="cpu",
     tokenizer=tokenizer,
+    gates_pretrained=gates_pretrained
 )
