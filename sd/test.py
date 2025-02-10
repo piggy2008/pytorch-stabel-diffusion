@@ -58,7 +58,7 @@ strength = 0.9
 ## SAMPLER
 
 sampler = "rf"
-num_inference_steps = 5
+num_inference_steps = 2
 seed = 66666
 
 # output_image = pipeline.generate(

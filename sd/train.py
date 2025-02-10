@@ -93,7 +93,7 @@ strength = 0.9
 
 
 
-output_image = pipeline_no_ed.train(
+output_image = pipeline_no_ed.train_cdrps(
     uncond_prompt=uncond_prompt,
     prompt=prompt,
     n_timestamp=timesteps,

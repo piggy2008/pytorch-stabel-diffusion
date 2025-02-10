@@ -288,6 +288,7 @@ def generate_all(
 
                 for j in tqdm(range(n_inference_steps)):
                     if model_name == 'DiT':
+                        # print('j=', j)
                         time_embedding = torch.tensor([j * d_step * timestamps]).to(device)
                     else:
                         time_embedding = get_time_embedding(timestep, 'test').to(device)
@@ -585,49 +586,58 @@ def train_cdrps(sampler_name="ddpm",
                 # context = torch.cat([cond_context, uncond_context])
                 # data_concate = torch.cat([data_color, snr_map], dim=1)
                 optimizer.zero_grad()
+                d_step = 1 / 2
 
-                if sampler_name == 'rf':
-                    t = torch.rand(b).to(device)
-                    noisy_image, noise = sampler.create_flow(data_high, t)
-                    if model_name == 'DiT':
-                        timestamps = (t * n_timestamp).long()
-                    else:
-                        timestamps = get_time_embedding_rf(t, device)
-                else:
-                    t = torch.randint(0, n_timestamp, (b,)).long()
-                    # timestamps = get_time_embedding(t).to(device)
-                    noisy_image, noise = sampler.add_noise(data_high, t)
-                    if model_name == 'DiT':
-                        # timestamps = t * n_timestamp
-                        timestamps = t.to(device)
-                        # print(timestamps)
-                    else:
-                        timestamps = get_time_embedding(t).to(device)
+                # t = torch.rand(b).to(device)
+                t = torch.tensor([0 * d_step * n_timestamp]).to(device)
+                t2 = torch.tensor([1 * d_step * n_timestamp]).to(device)
+                latents = torch.randn(data_high.shape, generator=generator, device=device)
+                # noisy_image, noise = sampler.create_flow(data_high, t)
 
-                input_image = torch.cat([data_low, noisy_image], dim=1)
-                noise_pred = dgr.model(input_image, uncond_context, timestamps)
+
+                input_image = torch.cat([data_low, latents], dim=1)
+                noise_pred = dgr.model(input_image, uncond_context, t)
+
+                loss = loss_func(noise_pred, data_high - latents)
+                # print('diffusion loss:', loss.item())
+                latents = sampler.euler(latents, noise_pred, d_step)
                 # input_image = torch.cat([input_image, input_image.clone()], dim=0)
                 # timestamps = torch.cat([timestamps, timestamps.clone()], dim=0)
+                input_image2 = torch.cat([data_low, latents], dim=1)
+                noise_pred2 = dgr.model(input_image2, uncond_context, t2)
 
-                if sampler_name == 'rf':
-                    # data_high = torch.cat([data_high, data_high.clone()], dim=0)
-                    # noise = torch.cat([noise, noise.clone()], dim=0)
-                    loss = loss_func(noise_pred, data_high - noise)
-                    print('diffusion loss:', loss.item())
-                    # print(noisy_image.shape)
-                    # print(noise_pred.shape)
-                    # print(timestamps.shape)
-                    one_step_high = sampler.euler(noisy_image, noise_pred, timestamps.reshape([b, 1, 1, 1]))
-                    one_step = rescale(one_step_high, (-1, 1), (0, 1), clamp=True)
-                    data_high_normal = rescale(data_high, (-1, 1), (0, 1), clamp=True)
-                    loss_dcp = dcp_loss_fn(one_step, data_high_normal)
-                    loss += loss_dcp
-                    loss_lamda = gamma * sum(torch.norm(gate.lambdas, p=1) for gate in dgr.gates.values())
-                    loss += loss_lamda
+                latents = sampler.euler(latents, noise_pred2, d_step)
+                # data_high = torch.cat([data_high, data_high.clone()], dim=0)
+                # noise = torch.cat([noise, noise.clone()], dim=0)
 
-                    print('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
-                else:
-                    loss = loss_func(noise_pred, noise)
+                # print(noisy_image.shape)
+                # print(noise_pred.shape)
+                # print(timestamps.shape)
+                # one_step_high = sampler.euler(noisy_image, noise_pred, timestamps.reshape([b, 1, 1, 1]))
+                # images = rescale(latents, (-1, 1), (0, 255), clamp=True)
+                # images = images.permute(0, 2, 3, 1)
+                # images = images.to("cpu", torch.uint8).numpy()
+                # from matplotlib import pyplot as plt
+                # plt.subplot(2, 2, 1)
+                # plt.imshow(images[0])
+                # plt.subplot(2, 2, 2)
+                # plt.imshow(images[1])
+                # plt.subplot(2, 2, 3)
+                # plt.imshow(images[2])
+                # plt.subplot(2, 2, 4)
+                # plt.imshow(images[3])
+                # plt.show()
+
+
+                one_step = rescale(latents, (-1, 1), (0, 1), clamp=True)
+                data_high_normal = rescale(data_high, (-1, 1), (0, 1), clamp=True)
+                loss_dcp = dcp_loss_fn(one_step, data_high_normal)
+                loss += loss_dcp
+                loss_lamda = gamma * sum(torch.norm(gate.lambdas, p=1) for gate in dgr.gates.values())
+                # loss += loss_lamda
+
+                print('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
+
                 loss = loss.mean()
                 loss.backward()
                 # accelerator.backward(loss)
@@ -648,8 +658,8 @@ def train_cdrps(sampler_name="ddpm",
                              loss_list=loss_list)
             torch.save(save_dict,
                        os.path.join(save_path, f'sd_diffusion_{e}.pth'))
-
-            torch.save({layer: gates.cpu() for layer, gates in dgr.gates.items()}, os.path.join(save_path, f'control_gates_{e}.pth'))
+            best_gates = {layer: gate.lambdas.clone().detach() for layer, gate in dgr.gates.items()}
+            torch.save({layer: gates.cpu() for layer, gates in best_gates.items()}, os.path.join(save_path, f'control_gates_{e}.pth'))
             print("Optimized control gates saved.")
             # accelerator.save_model(diffusion, os.path.join(save_path, f'sd_diffusion_{e}.pth'))
 
