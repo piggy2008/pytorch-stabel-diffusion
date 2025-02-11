@@ -404,10 +404,10 @@ def generate_all_cdprs(
         diffusion = models["diffusion"]
         diffusion.to(device)
         layers_to_gate = range(0, 8)  # Specify layers to gate
-        gamma = 0.05
         dgr = DistillationGuidedRouting(diffusion, layers_to_gate, device)
         saved_gates = torch.load(gates_pretrained)
         for layer, gate in saved_gates.items():
+            print('layer:', layer, '-----gate:', gate)
             dgr.gates[layer].lambdas.data = gate.to(device)
         print("Control gates loaded for inference.")
         dgr.model.eval()
@@ -821,7 +821,7 @@ def train_cdrps(sampler_name="ddpm",
                 loss_lamda = gamma * sum(torch.norm(gate.lambdas, p=1) for gate in dgr.gates.values())
                 # loss += loss_lamda
 
-                print('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
+                # print('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
 
                 loss = loss.mean()
                 loss.backward()
@@ -830,14 +830,14 @@ def train_cdrps(sampler_name="ddpm",
                 loss_list.append(loss.item())
                 if batch % batch_print_interval == 0:
                     # print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
-                    logger.info('[Epoch {}] [batch {}] loss: {}'.format(e, batch, loss.item()))
+                    logger.info('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
 
         warmUpScheduler.step()
 
         if e % checkpoint_save_interval == 0 or e == epochs - 1:
             print(f'Saving model {e} to {save_path}...')
             logger.info('Saving model {} to {}...'.format(e, save_path))
-            save_dict = dict(model=diffusion.state_dict(),
+            save_dict = dict(model=dgr.model.state_dict(),
                              optimizer=optimizer.state_dict(),
                              epoch=e,
                              loss_list=loss_list)
