@@ -48,6 +48,8 @@ class LRHRDataset(Dataset):
                 '{}/{}'.format(dataroot, 'train_input'))
             self.hr_path = Util.get_paths_from_images(
                 '{}/{}'.format(dataroot, 'train_gt'))
+            self.dehaze_path = Util.get_paths_from_images(
+                '{}/{}'.format(dataroot, 'train_gt_dehaze'))
             # self.style_path = Util.get_paths_from_images(
             #     '{}/hr_{}_style'.format(dataroot, r_resolution))
             # if self.need_LR:
@@ -74,6 +76,7 @@ class LRHRDataset(Dataset):
 
         img_HR = Image.open(self.hr_path[index]).convert("RGB").resize((self.image_size, self.image_size))
         img_SR = Image.open(self.sr_path[index]).convert("RGB").resize((self.image_size, self.image_size))
+        img_dehaze = Image.open(self.dehaze_path[index]).convert("RGB").resize((self.image_size, self.image_size))
         # img_style = Image.open(self.style_path[index]).convert("RGB")
         # img_style = Image.open(self.style_path[index_style]).convert("RGB")
 
@@ -87,6 +90,6 @@ class LRHRDataset(Dataset):
         # img_SR = color_filter(img_SR)
         # img_SR = img_SR.copy()
         # img_style = Image.open(self.sr_path[index]).convert("RGB")
-        [img_SR, img_HR] = Util.transform_augment(
-            [img_SR, img_HR], split=self.split, min_max=(-1, 1))
-        return {'high': img_HR, 'low': img_SR}
+        [img_SR, img_HR, img_dehaze] = Util.transform_augment(
+            [img_SR, img_HR, img_dehaze], split=self.split, min_max=(-1, 1))
+        return {'high': img_HR, 'low': img_SR, 'dehaze': img_dehaze}

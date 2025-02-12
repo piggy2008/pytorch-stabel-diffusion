@@ -116,6 +116,10 @@ class DarkChannelLoss(nn.Module):
         self.lambda_smooth = lambda_smooth
         self.weight = weight
 
+        self.kernel_size = patch_size
+        self.pad = nn.ReflectionPad2d(padding=patch_size // 2)
+        self.unfold = nn.Unfold(kernel_size=(self.kernel_size, self.kernel_size), padding=0)
+
     def forward(self, predicted_image, input_image):
         """
         Compute the dark channel loss.
@@ -128,11 +132,19 @@ class DarkChannelLoss(nn.Module):
         - loss (Tensor): Scalar loss value.
         """
         # Compute dark channel of the predicted image
-        dark_channel_pred = dark_channel(predicted_image, self.patch_size)
-
+        # dark_channel_pred = dark_channel(predicted_image, self.patch_size)
+        b, c, h, w = predicted_image.shape
+        predicted_pad = self.pad(predicted_image)
+        predicted_local_patches = self.unfold(predicted_pad)
+        dc_predicted, dc_index = torch.min(predicted_local_patches, dim=1, keepdim=True)
+        dark_channel_pred = dc_predicted.view(b, 1, h, w)
         # Compute dark channel of the input hazy image
-        dark_channel_input = dark_channel(input_image, self.patch_size)
-        dark_channel_input = soft_matting_refinement(dark_channel_input, input_image, lambda_matting=0.00005)
+        # dark_channel_input = dark_channel(input_image, self.patch_size)
+        input_pad = self.pad(input_image)
+        input_local_patches = self.unfold(input_pad)
+        dc_input, dc_index = torch.min(input_local_patches, dim=1, keepdim=True)
+        dark_channel_input = dc_input.view(b, 1, h, w)
+        # dark_channel_input = soft_matting_refinement(dark_channel_input, input_image, lambda_matting=0.00005)
         # Fidelity term (ensure dark channel of output is small)
         fidelity_loss = torch.mean(dark_channel_pred)
 
@@ -161,18 +173,18 @@ if __name__ == "__main__":
     # Convert the PIL image to Torch tensor
     img_tensor = transform(gt_image)
     img_tensor = img_tensor.unsqueeze(0)
-    dark = dark_channel(img_tensor)
-    # dark2 = enhance_dark_channel(dark)
-    dark2 = soft_matting_refinement(dark, img_tensor, lambda_matting=0.00005)
-    print(dark.shape)
-    from matplotlib import pyplot as plt
-    plt.subplot(1, 2, 1)
-    plt.imshow(dark.data.cpu().numpy()[0, 0])
-    plt.subplot(1, 2, 2)
-    plt.imshow(dark2.data.cpu().numpy()[0, 0])
-    plt.show()
-    # dcp_loss_fn = DarkChannelLoss(patch_size=15, lambda_smooth=1e-4, weight=0.1)
+    # dark = dark_channel(img_tensor)
+    # # dark2 = enhance_dark_channel(dark)
+    # dark2 = soft_matting_refinement(dark, img_tensor, lambda_matting=0.00005)
+    # print(dark.shape)
+    # from matplotlib import pyplot as plt
+    # plt.subplot(1, 2, 1)
+    # plt.imshow(dark.data.cpu().numpy()[0, 0])
+    # plt.subplot(1, 2, 2)
+    # plt.imshow(dark2.data.cpu().numpy()[0, 0])
+    # plt.show()
+    dcp_loss_fn = DarkChannelLoss(patch_size=15, lambda_smooth=1e-4, weight=0.1)
 
     # Compute the loss
-    # loss = dcp_loss_fn(predicted_image, input_image)
+    loss = dcp_loss_fn(predicted_image, input_image)
     # print(f"Dark Channel Loss: {loss.item()}")

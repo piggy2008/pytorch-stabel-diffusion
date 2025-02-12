@@ -744,6 +744,7 @@ def train_cdrps(sampler_name="ddpm",
             for batch, data in enumerate(tqdmDataLoader):
                 data_high = data['high'].to(device)
                 data_low = data['low'].to(device)
+                data_dehaze = data['dehaze'].to(device)
                 [b, c, h, w] = data_high.shape
                 # encoder -> 3, 512, 512 to 4, 512//8, 512//8
                 # encoder_noise = torch.randn(latents_shape, generator=generator, device=device)
@@ -815,11 +816,14 @@ def train_cdrps(sampler_name="ddpm",
 
 
                 one_step = rescale(latents, (-1, 1), (0, 1), clamp=True)
-                data_high_normal = rescale(data_high, (-1, 1), (0, 1), clamp=True)
-                loss_dcp = dcp_loss_fn(one_step, data_high_normal)
+                data_dehaze_normal = rescale(data_dehaze, (-1, 1), (0, 1), clamp=True)
+                loss_dcp = dcp_loss_fn(one_step, data_dehaze_normal)
                 loss += loss_dcp
                 loss_lamda = gamma * sum(torch.norm(gate.lambdas, p=1) for gate in dgr.gates.values())
-                # loss += loss_lamda
+
+                data_high_normal = rescale(data_high, (-1, 1), (0, 1), clamp=True)
+                loss_real_l1 = loss_func(one_step, data_high_normal)
+                loss += loss_real_l1
 
                 # print('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
 
@@ -830,7 +834,8 @@ def train_cdrps(sampler_name="ddpm",
                 loss_list.append(loss.item())
                 if batch % batch_print_interval == 0:
                     # print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
-                    logger.info('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
+                    logger.info('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {} loss_real: {}'.
+                                format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item(), loss_real_l1.item()))
 
         warmUpScheduler.step()
 

@@ -495,7 +495,7 @@ if __name__ == '__main__':
         final = sorted(dis_dict.items(), key=lambda x: x[1][0], reverse=True)
         print(final)
     elif test_all_units == 1:
-        units = [378, 345, 339, 333, 275, 255, 194, 174, 164, 144, 92, 76]
+        units = [378, 345, 339, 333, 275, 242, 194, 164, 144, 92]
         # set_units = [i]
         set_units = units
         check_layers = ['blocks.0']
