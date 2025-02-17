@@ -10,6 +10,7 @@ import os
 import logging
 from diffusion import Diffusion
 from PIL import Image
+from util import load_part_of_model
 
 # from accelerate import Accelerator
 from accelerate.utils import set_seed
@@ -341,7 +342,7 @@ def generate_all_cdprs(
         device=None,
         idle_device=None,
         tokenizer=None,
-        gates_pretrained=''
+        gates_pretrained='',
 ):
     with (torch.no_grad()):
         if not 0 < strength <= 1:
@@ -404,7 +405,9 @@ def generate_all_cdprs(
         diffusion = models["diffusion"]
         diffusion.to(device)
         layers_to_gate = range(0, 8)  # Specify layers to gate
-        dgr = DistillationGuidedRouting(diffusion, layers_to_gate, device)
+        select_channels = [378, 345, 339, 333, 275, 242, 194, 164, 144, 92]
+        # select_channels = range(0, 384)
+        dgr = DistillationGuidedRouting(diffusion, layers_to_gate, select_channels, device)
         saved_gates = torch.load(gates_pretrained)
         for layer, gate in saved_gates.items():
             print('layer:', layer, '-----gate:', gate)
@@ -718,20 +721,30 @@ def train_cdrps(sampler_name="ddpm",
     clip.eval()
 
     layers_to_gate = range(0, 8)  # Specify layers to gate
-    gamma = 0.05
-    dgr = DistillationGuidedRouting(diffusion, layers_to_gate, device)
-    diffusion.eval()
+    gamma = 0.01
+    select_channels = [378, 345, 339, 333, 275, 242, 194, 164, 144, 92]
+    # select_channels = None
+    dgr = DistillationGuidedRouting(diffusion, layers_to_gate, select_channels, device)
+    # diffusion.eval()
 
     loss_func = nn.MSELoss(reduction='mean').to(device)
     dcp_loss_fn = DarkChannelLoss(patch_size=15, lambda_smooth=1e-4, weight=0.1).to(device)
     logger = logging.getLogger('base')
-
-    optimizer = torch.optim.AdamW(
-        [gate.lambdas for gate in dgr.gates.values()], lr=lr, weight_decay=1e-4)
+    diffusion_param = []
+    for name, param in diffusion.named_parameters():
+        if 'lambdas' in name:
+            continue
+        else:
+            diffusion_param.append(param)
+    gates_param = [gate.lambdas for gate in dgr.gates.values()]
+    optimizer = torch.optim.AdamW([
+        {'params': diffusion_param, 'lr': lr},
+        {'params': gates_param, 'lr': lr * 10},
+    ], lr=lr, weight_decay=1e-4)
     cosineScheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer=optimizer, T_max=1000, eta_min=0, last_epoch=-1)
     warmUpScheduler = GradualWarmupScheduler(
-        optimizer=optimizer, multiplier=2., warm_epoch=epochs // 10,
+        optimizer=optimizer, multiplier=2., warm_epoch=1,
         after_scheduler=cosineScheduler)
 
     # diffusion, optimizer, warmUpScheduler, data_loader = accelerator.prepare(diffusion, optimizer, warmUpScheduler, data_loader)
@@ -817,13 +830,17 @@ def train_cdrps(sampler_name="ddpm",
 
                 one_step = rescale(latents, (-1, 1), (0, 1), clamp=True)
                 data_dehaze_normal = rescale(data_dehaze, (-1, 1), (0, 1), clamp=True)
-                loss_dcp = dcp_loss_fn(one_step, data_dehaze_normal)
-                loss += loss_dcp
-                loss_lamda = gamma * sum(torch.norm(gate.lambdas, p=1) for gate in dgr.gates.values())
+                # loss_dcp = 10 * dcp_loss_fn(one_step, data_dehaze_normal)
+                # loss += loss_dcp
+                loss_lamda = gamma * sum(torch.norm(gate.lambdas, p=2) for gate in dgr.gates.values())
+                loss += loss_lamda
 
                 data_high_normal = rescale(data_high, (-1, 1), (0, 1), clamp=True)
-                loss_real_l1 = loss_func(one_step, data_high_normal)
+                alpha = 0.85
+                loss_real_l1 = alpha * loss_func(one_step, data_high_normal)
                 loss += loss_real_l1
+                loss_real_l2 = (1 - alpha) * loss_func(one_step, data_dehaze_normal)
+                loss += loss_real_l2
 
                 # print('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {}'.format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item()))
 
@@ -834,8 +851,8 @@ def train_cdrps(sampler_name="ddpm",
                 loss_list.append(loss.item())
                 if batch % batch_print_interval == 0:
                     # print(f'[Epoch {e}] [batch {batch}] loss: {loss.item()}')
-                    logger.info('[Epoch {}] [batch {}] loss: {} loss_dcp: {} loss_lamda: {} loss_real: {}'.
-                                format(e, batch, loss.item(), loss_dcp.item(), loss_lamda.item(), loss_real_l1.item()))
+                    logger.info('[Epoch {}] [batch {}] loss: {} loss_lamda: {} loss_real: {} loss_real_dehaze: {}'.
+                                format(e, batch, loss.item(), loss_lamda.item(), loss_real_l1.item(), loss_real_l2.item()))
 
         warmUpScheduler.step()
 
@@ -887,19 +904,3 @@ def get_time_embedding_rf(timestep, device):
     return torch.cat([torch.cos(x), torch.sin(x)], dim=-1)
 
 
-def load_part_of_model(new_model, src_model_path, s):
-    src_model = torch.load(src_model_path)['model']
-    m_dict = new_model.state_dict()
-    for k in src_model.keys():
-        if k in m_dict.keys():
-            param = src_model.get(k)
-            if param.shape == m_dict[k].data.shape:
-                m_dict[k].data = param
-                print('loading:', k)
-            else:
-                print('shape is different, not loading:', k)
-        else:
-            print('not loading:', k)
-
-    new_model.load_state_dict(m_dict, strict=s)
-    return new_model
