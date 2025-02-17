@@ -20,6 +20,7 @@ vocab_file: '../data/vocab.json'
 merge_file: '../data/merges.txt'
 prompt: 'remove haze from underwater image'
 uncond_prompt: ''
+selected_channels: [378, 345, 339, 333, 275, 242, 194, 164, 144, 92]
 
 # pretrained param
 pre_trained_param: '../data/v1-5-pruned-emaonly.ckpt'

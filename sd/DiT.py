@@ -14,7 +14,7 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
-from spatial_attention import BasicTransformerBlock, CrossAttention
+from spatial_attention import BasicTransformerBlock, CrossAttention, CrossAttention2
 import torch.fft as fft
 
 def calc_mean_std(input, eps=1e-5):
@@ -126,7 +126,7 @@ class DiTBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
     """
-    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, selected_channels=[], **block_kwargs):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
@@ -140,7 +140,10 @@ class DiTBlock(nn.Module):
         )
 
         self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn2 = CrossAttention(query_dim=hidden_size, context_dim=768, heads=1, dim_head=hidden_size, dropout=0.)
+        self.attn2 = CrossAttention2(query_dim=hidden_size, context_dim=768,
+                                     heads=1, dim_head=hidden_size, selected_channels=selected_channels, dropout=0.)
+        # self.attn2 = CrossAttention(query_dim=hidden_size, context_dim=768,
+        #                              heads=1, dim_head=hidden_size, dropout=0.)
         self.norm4 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.mlp2 = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
@@ -196,6 +199,7 @@ class DiT(nn.Module):
         class_dropout_prob=0.1,
         num_classes=1000,
         learn_sigma=False,
+        selected_channles=[],
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -214,7 +218,7 @@ class DiT(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
         self.blocks = nn.ModuleList([
-            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
+            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, selected_channels=selected_channles) for _ in range(depth)
         ])
 
         # self.transformer_blocks = nn.ModuleList(

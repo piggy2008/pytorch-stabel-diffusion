@@ -565,7 +565,6 @@ def train(sampler_name="ddpm",
     clip = models["clip"]
     clip.to(device)
     clip.eval()
-
     loss_func = nn.MSELoss(reduction='mean').to(device)
 
     logger = logging.getLogger('base')

@@ -44,8 +44,9 @@ image_root = config.get('img_root_path')
 image_size = config.get('image_size')
 in_channels = config.get('in_channels')
 out_channels = config.get('out_channels')
-models = model_loader.preload_models_from_standard_weights(model_file, DEVICE,
-                                                           in_channels=in_channels, out_channels=out_channels, image_size=(image_size))
+selected_channels = config.get('selected_channels')
+models = model_loader.preload_models_from_standard_weights(model_file, DEVICE, in_channels=in_channels,
+                                                           out_channels=out_channels, selected_channels=selected_channels, image_size=(image_size))
 epochs = config.get('epochs')
 batch_size = config.get('batch_size')
 lr_adjust_epoch = config.get('lr_adjust_epoch')
@@ -74,11 +75,13 @@ logger.info('resume path:' + resume_path)
 
 # prompt = "A dog with sunglasses, wearing comfy hat, looking at camera, highly detailed, ultra sharp, cinematic, 100mm lens, 8k resolution."
 prompt = config.get('prompt')
-uncond_prompt =  config.get('uncond_prompt')  # Also known as negative prompt
+uncond_prompt = config.get('uncond_prompt')  # Also known as negative prompt
+
 # do_cfg = True
 # cfg_scale = 8  # min: 1, max: 14
 logger.info('clip input prompt text(positive):' + prompt)
 logger.info('clip input prompt text(negative):' + uncond_prompt)
+logger.info('selected channels:' + selected_channels)
 ## IMAGE TO IMAGE
 
 input_image = None

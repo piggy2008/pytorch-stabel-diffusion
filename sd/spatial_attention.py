@@ -4,6 +4,59 @@ import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 from einops import rearrange, repeat
+import torch.fft as fft
+def Fourier_filter(x, threshold, selected_channels):
+    # FFT
+    x = unpatchify(x, 384, 1)
+    x_selected = x[:, selected_channels, :, :]
+    x_freq = fft.fftn(x_selected, dim=(-2, -1))
+    x_freq = fft.fftshift(x_freq, dim=(-2, -1))
+
+    B, C, H, W = x_freq.shape
+
+    center_h, center_w = H // 2, W // 2
+    radius = int(threshold * min(H, W) / 2)  # Define swapping region
+
+    # Create a mask to select frequencies within the given radius
+    Y, X = torch.meshgrid(torch.arange(H), torch.arange(W), indexing="ij")
+    dist = torch.sqrt((X - center_w) ** 2 + (Y - center_h) ** 2)
+    mask = (dist < radius).float()
+    # x_selected = x_selected * mask
+    # mask = mask.repeat(C, 1, 1).to(x.device) * scale.view(-1, 1, 1) + 1 - mask.repeat(C, 1, 1).to(x.device)
+    # mask = torch.ones((B, C, H, W)).cuda()
+
+    # crow, ccol = H // 2, W // 2
+    # mask[..., crow - threshold:crow + threshold, ccol - threshold:ccol + threshold] = scale
+    x_freq = x_freq * mask
+
+    # IFFT
+    x_freq = fft.ifftshift(x_freq, dim=(-2, -1))
+    x_filtered = fft.ifftn(x_freq, dim=(-2, -1)).real
+
+    x_filtered = patchify(x_filtered)
+    return x_filtered
+
+def patchify(x):
+    """
+    x: (N, H, W, C)
+    imgs: (N, T(h*w), C)
+    """
+    imgs = x.flatten(2).transpose(1, 2)  # NCHW -> NLC
+
+    return imgs
+
+def unpatchify(x, c, p):
+    """
+    x: (N, T, patch_size**2 * C)
+    imgs: (N, H, W, C)
+    """
+    h = w = int(x.shape[1] ** 0.5)
+    assert h * w == x.shape[1]
+
+    x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
+    x = torch.einsum('nhwpqc->nchpwq', x)
+    imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
+    return imgs
 
 class CheckpointFunction(torch.autograd.Function):
     @staticmethod
@@ -202,6 +255,68 @@ class CrossAttention(nn.Module):
         out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
         return self.to_out(out)
 
+class CrossAttention2(nn.Module):
+    def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, selected_channels=[], dropout=0.):
+        super().__init__()
+        inner_dim = dim_head * heads
+        context_dim = default(context_dim, query_dim)
+
+        self.scale = dim_head ** -0.5
+        self.heads = heads
+
+        self.selected_channels = selected_channels
+        self.to_q_selected = nn.Linear(len(selected_channels), inner_dim, bias=False)
+
+        self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
+        self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
+        self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, query_dim),
+            nn.Dropout(dropout)
+        )
+
+        self.to_out_selected = nn.Sequential(
+            nn.Linear(inner_dim, len(selected_channels)),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x, context=None, mask=None):
+        h = self.heads
+        q_selected_input = Fourier_filter(x, 0.3, self.selected_channels)
+        q_selected = self.to_q_selected(q_selected_input)
+
+        q = self.to_q(x)
+        context = default(context, x)
+        k = self.to_k(context)
+        v = self.to_v(context)
+
+        q, k, v, q_selected = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v, q_selected))
+
+        sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
+
+        sim_selected = einsum('b i d, b j d -> b i j', q_selected, k) * self.scale
+        if exists(mask):
+            mask = rearrange(mask, 'b ... -> b (...)')
+            max_neg_value = -torch.finfo(sim.dtype).max
+            mask = repeat(mask, 'b j -> (b h) () j', h=h)
+            sim.masked_fill_(~mask, max_neg_value)
+
+        # attention, what we cannot get enough of
+        attn = sim.softmax(dim=-1)
+
+        attn_selcted = sim_selected.softmax(dim=-1)
+
+        out = einsum('b i j, b j d -> b i d', attn, v)
+        out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
+        out = self.to_out(out)
+
+        out_selected = einsum('b i j, b j d -> b i d', attn_selcted, v)
+        out_selected = rearrange(out_selected, '(b h) n d -> b n (h d)', h=h)
+        out_selected = self.to_out_selected(out_selected)
+        out[:, :, self.selected_channels] += out_selected
+        return out
+
 class GEGLU(nn.Module):
     def __init__(self, dim_in, dim_out):
         super().__init__()
@@ -297,3 +412,10 @@ class SpatialTransformer(nn.Module):
         x = self.proj_out(x)
         # print('SpatialTransformer:', x.shape)
         return x + x_in
+
+if __name__ == '__main__':
+    atte = CrossAttention2(384, context_dim=768, heads=1, dim_head=384, selected_channels=list(range(0, 10)), dropout=0.)
+    a = torch.zeros([2, 4096, 384])
+    b = torch.zeros([2, 77, 768])
+    c = atte(a, b)
+    print(c.shape)
